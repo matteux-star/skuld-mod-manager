@@ -54,11 +54,7 @@ fn add_game(name: String, path: String, game_type: String) -> Result<AppConfig, 
     deploy::verify_game_path(&gt, &PathBuf::from(&path))?;
 
     let mut cfg = config::load().map_err(|e| e.to_string())?;
-    let support_status = if game_type == "witcher3" {
-        "verified"
-    } else {
-        "provisional"
-    };
+    let support_status = GameRegistry::get(&gt).support_status();
     let game = config::GameEntry {
         id: uuid::Uuid::new_v4().to_string(),
         game_type: game_type.clone(),
@@ -189,7 +185,11 @@ fn toggle_mod(game_id: String, mod_id: String) -> Result<ToggleResult, String> {
         .position(|g| g.id == game_id)
         .ok_or("Game not found")?;
 
-    let has_load_order = cfg.games[game_idx].game_type == "witcher3";
+    let has_load_order = {
+        let gt: GameType = serde_json::from_str(&format!("\"{}\"", cfg.games[game_idx].game_type))
+            .map_err(|e| format!("Unknown game type: {}", e))?;
+        GameRegistry::get(&gt).has_load_order()
+    };
     let game_name = cfg.games[game_idx].name.clone();
     let game_type = cfg.games[game_idx].game_type.clone();
     let game_path = cfg.games[game_idx].path.clone();
@@ -407,7 +407,11 @@ fn check_conflicts(game_id: String) -> Result<Vec<(String, ConflictInfo)>, Strin
         .find(|g| g.id == game_id)
         .ok_or("Game not found")?;
 
-    let has_load_order = game.game_type == "witcher3";
+    let has_load_order = {
+        let gt: GameType = serde_json::from_str(&format!("\"{}\"", game.game_type))
+            .map_err(|e| format!("Unknown game type: {}", e))?;
+        GameRegistry::get(&gt).has_load_order()
+    };
     let results = conflicts::check_all_conflicts(&game.mods, has_load_order);
 
     Ok(results
@@ -646,15 +650,13 @@ fn scan_saves(game_id: String) -> Result<Vec<SaveFile>, String> {
     let game_type: GameType = serde_json::from_str(&format!("\"{}\"", game.game_type))
         .map_err(|e| format!("Unknown game type: {}", e))?;
     let registry = GameRegistry::get(&game_type);
-    let save_rel = registry.save_path();
+    let save_dir = registry.save_dir(&PathBuf::from(&game.path))?;
 
-    if save_rel.is_empty() {
-        return Err("Save scanning is not supported for this game.".to_string());
-    }
-
-    let save_dir = PathBuf::from(&game.path).join(save_rel);
     if !save_dir.exists() {
-        return Err(format!("Save directory not found: {}", save_dir.display()));
+        return Err(format!(
+            "Save directory not found yet at {} — play and save once first.",
+            save_dir.display()
+        ));
     }
 
     let mut saves = Vec::new();

@@ -1,5 +1,5 @@
 use crate::config::ModEntry;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::Game;
 
@@ -10,8 +10,8 @@ impl Game for Witcher3 {
         "The Witcher 3"
     }
 
-    fn mod_path(&self) -> &'static str {
-        "Mods"
+    fn mod_dir(&self, game_path: &Path) -> Result<PathBuf, String> {
+        Ok(game_path.join("Mods"))
     }
 
     fn valid_mod_formats(&self) -> Vec<&'static str> {
@@ -22,8 +22,12 @@ impl Game for Witcher3 {
         true
     }
 
-    fn save_path(&self) -> &'static str {
-        "Documents/The Witcher 3/gamesaves"
+    fn save_dir(&self, game_path: &Path) -> Result<PathBuf, String> {
+        Ok(game_path.join("Documents/The Witcher 3/gamesaves"))
+    }
+
+    fn support_status(&self) -> &'static str {
+        "verified"
     }
 
     fn post_deploy(&self, game_path: &PathBuf, mods: &[ModEntry]) -> Result<(), String> {

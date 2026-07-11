@@ -1,5 +1,5 @@
 use crate::config::ModEntry;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -18,15 +18,19 @@ pub enum GameType {
 pub trait Game {
     /// Human-readable name.
     fn name(&self) -> &'static str;
-    /// Where mods live relative to the game install root.
-    fn mod_path(&self) -> &'static str;
+    /// Resolve the directory mods are deployed into. May live outside the
+    /// game install root (e.g. inside a Proton prefix). The error string is
+    /// shown directly in the UI.
+    fn mod_dir(&self, game_path: &Path) -> Result<PathBuf, String>;
     /// File extensions or folder patterns that make a mod valid.
     fn valid_mod_formats(&self) -> Vec<&'static str>;
     /// Whether load order matters for this game.
     fn has_load_order(&self) -> bool;
-    /// Where save files live relative to the game install root.
-    /// Returns empty string if save scanning is not supported.
-    fn save_path(&self) -> &'static str;
+    /// Resolve the directory save files live in. The error string is shown
+    /// directly in the UI.
+    fn save_dir(&self, game_path: &Path) -> Result<PathBuf, String>;
+    /// Support status assigned when the game is added.
+    fn support_status(&self) -> &'static str;
     /// Post-deploy step, if any (e.g. regenerate mods.settings).
     fn post_deploy(&self, _game_path: &PathBuf, _mods: &[ModEntry]) -> Result<(), String> {
         Ok(())

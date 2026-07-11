@@ -228,9 +228,10 @@ pub fn validate_witcher3(extract_dir: &Path) -> Result<PathBuf, String> {
     Err("No mod folder with a 'content/' subfolder found. Witcher 3 mods must contain a folder with 'content/' inside.".to_string())
 }
 
-/// Derive installed_files: walk the mod root and record paths relative to the game's mod root.
-/// For SoD2, each .pak file maps to `<game_mod_path>/<pak_filename>`.
-/// For Witcher 3, each file maps to `<game_mod_path>/<mod_name>/<relative_path>`.
+/// Derive installed_files: paths relative to the game's mod directory
+/// (`Game::mod_dir`), which deploy joins them onto.
+/// For SoD2, each .pak file maps to `<pak_filename>` (flattened).
+/// For Witcher 3, each file maps to `<mod_name>/<relative_path>`.
 pub fn derive_installed_files(
     mod_root: &Path,
     game_type: &str,
@@ -244,11 +245,11 @@ pub fn derive_installed_files(
         "sod2" => files
             .into_iter()
             .filter(|p| p.extension().map(|e| e == "pak").unwrap_or(false))
-            .map(|p| format!("Content/Paks/~mods/{}", p.file_name().unwrap().to_string_lossy()))
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
             .collect(),
         "witcher3" => files
             .into_iter()
-            .map(|p| format!("Mods/{}/{}", mod_name, p.display()))
+            .map(|p| format!("{}/{}", mod_name, p.display()))
             .collect(),
         _ => files.into_iter().map(|p| p.display().to_string()).collect(),
     };
@@ -284,4 +285,32 @@ fn walk_relative(base: &Path, dir: &Path, files: &mut Vec<PathBuf>) -> io::Resul
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sod2_installed_files_are_bare_pak_filenames() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("nested/deeper")).unwrap();
+        fs::write(dir.path().join("top.pak"), b"x").unwrap();
+        fs::write(dir.path().join("nested/deeper/inner.pak"), b"x").unwrap();
+        fs::write(dir.path().join("readme.txt"), b"x").unwrap();
+
+        let mut files = derive_installed_files(dir.path(), "sod2", "MyMod").unwrap();
+        files.sort();
+        assert_eq!(files, vec!["inner.pak".to_string(), "top.pak".to_string()]);
+    }
+
+    #[test]
+    fn witcher3_installed_files_are_modname_relative() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("content")).unwrap();
+        fs::write(dir.path().join("content/blob0.bundle"), b"x").unwrap();
+
+        let files = derive_installed_files(dir.path(), "witcher3", "modFoo").unwrap();
+        assert_eq!(files, vec!["modFoo/content/blob0.bundle".to_string()]);
+    }
 }

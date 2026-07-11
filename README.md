@@ -9,6 +9,8 @@ A Tauri 2 desktop app for managing game mods on Linux. Import archives, toggle m
 | The Witcher 3 | REDengine 3 | Yes | Folder with `content/` | Verified |
 | State of Decay 2 | Unreal Engine 4 | No | `.pak` files | Provisional (Proton) |
 
+State of Decay 2 mods deploy into the game's Proton prefix (`steamapps/compatdata/495420/pfx/.../AppData/Local/StateOfDecay2/Saved/Paks`), resolved automatically from the install path. Launch the game once through Steam before adding it, so the prefix exists.
+
 ## How It Works
 
 1. **Add a game** — point to the install directory

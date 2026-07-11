@@ -28,11 +28,18 @@ fn create_symlink(source: &Path, target: &Path) -> Result<(), String> {
 /// Deploy all enabled mods for a game as symlinks.
 /// Returns per-mod results: Vec<(mod_name, success, message)>
 pub fn deploy_mods(game: &GameEntry) -> Result<Vec<(String, bool, String)>, String> {
+    deploy_mods_from_library(game, &crate::library_dir())
+}
+
+fn deploy_mods_from_library(
+    game: &GameEntry,
+    library_root: &Path,
+) -> Result<Vec<(String, bool, String)>, String> {
     let game_type: GameType = serde_json::from_str(&format!("\"{}\"", game.game_type))
         .map_err(|e| format!("Unknown game type: {}", e))?;
     let registry = GameRegistry::get(&game_type);
     let game_path = PathBuf::from(&game.path);
-    let mod_base = game_path.join(registry.mod_path());
+    let mod_base = registry.mod_dir(&game_path)?;
 
     let mut results = Vec::new();
 
@@ -41,7 +48,7 @@ pub fn deploy_mods(game: &GameEntry) -> Result<Vec<(String, bool, String)>, Stri
             continue;
         }
 
-        let mod_root = crate::library_dir()
+        let mod_root = library_root
             .join(&game.game_type)
             .join(&m.name);
 
@@ -84,7 +91,7 @@ pub fn remove_symlinks(game: &GameEntry, mod_entry: &ModEntry) -> Result<(), Str
     let game_type: GameType = serde_json::from_str(&format!("\"{}\"", game.game_type))
         .map_err(|e| format!("Unknown game type: {}", e))?;
     let registry = GameRegistry::get(&game_type);
-    let mod_base = PathBuf::from(&game.path).join(registry.mod_path());
+    let mod_base = registry.mod_dir(&PathBuf::from(&game.path))?;
 
     for file_path in &mod_entry.installed_files {
         let target = mod_base.join(file_path);
@@ -123,7 +130,10 @@ pub fn check_broken_symlinks(game: &GameEntry, mod_entry: &ModEntry) -> Vec<Stri
         Err(_) => return vec![],
     };
     let registry = GameRegistry::get(&game_type);
-    let mod_base = PathBuf::from(&game.path).join(registry.mod_path());
+    let mod_base = match registry.mod_dir(&PathBuf::from(&game.path)) {
+        Ok(dir) => dir,
+        Err(_) => return vec![],
+    };
 
     let mut broken = Vec::new();
 
@@ -176,6 +186,59 @@ pub fn redeploy_after_path_change(
     deploy_mods(game)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{GameEntry, ModEntry};
+
+    #[test]
+    fn sod2_deploy_symlinks_paks_into_proton_prefix_without_doubled_paths() {
+        let root = tempfile::tempdir().unwrap();
+
+        // Fake Steam library with Proton prefix
+        let game_path = root.path().join("steamapps/common/StateOfDecay2");
+        let saved = root.path().join(
+            "steamapps/compatdata/495420/pfx/drive_c/users/steamuser/AppData/Local/StateOfDecay2/Saved",
+        );
+        std::fs::create_dir_all(&game_path).unwrap();
+        std::fs::create_dir_all(&saved).unwrap();
+
+        // Fake mod library with one pak
+        let library = root.path().join("library");
+        let mod_root = library.join("sod2/CoolMod");
+        std::fs::create_dir_all(&mod_root).unwrap();
+        std::fs::write(mod_root.join("cool.pak"), b"pak").unwrap();
+
+        let game = GameEntry {
+            id: "g".into(),
+            game_type: "sod2".into(),
+            name: "SoD2".into(),
+            path: game_path.to_string_lossy().to_string(),
+            launch_path: None,
+            support_status: "provisional".into(),
+            mods: vec![ModEntry {
+                id: "m".into(),
+                name: "CoolMod".into(),
+                archive_source: "cool.zip".into(),
+                enabled: true,
+                priority: 1,
+                installed_files: vec!["cool.pak".into()],
+            }],
+        };
+
+        let results = deploy_mods_from_library(&game, &library).unwrap();
+        assert!(results.iter().all(|(_, ok, _)| *ok), "deploy failed: {:?}", results);
+
+        let target = saved.join("Paks/cool.pak");
+        assert!(target.is_symlink(), "expected symlink at {}", target.display());
+        assert_eq!(std::fs::read_link(&target).unwrap(), mod_root.join("cool.pak"));
+
+        // Removal cleans the symlink
+        remove_symlinks(&game, &game.mods[0]).unwrap();
+        assert!(!target.exists() && !target.is_symlink());
+    }
+}
+
 /// Verify that the game directory looks valid before registering.
 pub fn verify_game_path(game_type: &GameType, path: &Path) -> Result<(), String> {
     if !path.exists() {
@@ -186,7 +249,7 @@ pub fn verify_game_path(game_type: &GameType, path: &Path) -> Result<(), String>
     }
 
     let registry = GameRegistry::get(game_type);
-    let mod_path = path.join(registry.mod_path());
+    let mod_path = registry.mod_dir(path)?;
 
     // Check if mod path exists or can be created
     if !mod_path.exists() {

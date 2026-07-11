@@ -63,10 +63,14 @@ export default function AddGameDialog({ onPickDirectory, onAdd, onClose }: Props
             <div className="input-group">
               <label className="input-label" htmlFor="game-path">Install Path</label>
               <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-                <input id="game-path" className="input input-mono" type="text" value={path} onChange={e => setPath(e.target.value)} placeholder="/home/user/.steam/steam/steamapps/common/The Witcher 3" style={{ flex: 1 }} />
+                <input id="game-path" className="input input-mono" type="text" value={path} onChange={e => setPath(e.target.value)} placeholder={type === 'sod2' ? '/home/user/.steam/steam/steamapps/common/StateOfDecay2' : '/home/user/.steam/steam/steamapps/common/The Witcher 3'} style={{ flex: 1 }} />
                 <button type="button" className="btn btn-secondary btn-sm" onClick={handlePick} disabled={picking}>{picking ? '...' : 'Browse'}</button>
               </div>
-              <div className="input-hint">Absolute path to the game's install directory.</div>
+              <div className="input-hint">
+                {type === 'sod2'
+                  ? 'Steam install directory (under steamapps/common). Mods deploy into the Proton prefix — launch the game once through Steam first.'
+                  : "Absolute path to the game's install directory."}
+              </div>
             </div>
             {error && <div className="input-error" role="alert">{error}</div>}
           </div>
