@@ -1,0 +1,40 @@
+{
+  "type": "valheim",
+  "displayName": "Valheim",
+  "engine": "Unity",
+  "icon": "boat",
+  "supportStatus": "provisional",
+  "modDirectory": {
+    "relativeTo": "installPath",
+    "path": "BepInEx/plugins"
+  },
+  "saveDirectory": {
+    "relativeTo": "installPath",
+    "path": "valheim_Data/Saves"
+  },
+  "savePattern": "*.fwl",
+  "validation": {
+    "mode": "anyFiles",
+    "value": ""
+  },
+  "installFiles": {
+    "mode": "relativePaths",
+    "stripPrefix": null
+  },
+  "loadOrder": {
+    "supported": false,
+    "configFile": null
+  },
+  "conflicts": "warn",
+  "launch": {
+    "steamAppId": 892970,
+    "knownExecutables": ["valheim.exe", "valheim.x86_64"]
+  },
+  "detection": {
+    "steam": {
+      "appId": 892970,
+      "dirNames": ["Valheim"]
+    }
+  },
+  "proton": null
+}

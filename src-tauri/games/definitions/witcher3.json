@@ -1,0 +1,48 @@
+{
+  "type": "witcher3",
+  "displayName": "The Witcher 3: Wild Hunt",
+  "engine": "REDengine 3",
+  "icon": "sword",
+  "supportStatus": "verified",
+  "modDirectory": {
+    "relativeTo": "installPath",
+    "path": "Mods"
+  },
+  "saveDirectory": {
+    "relativeTo": "installPath",
+    "path": "Documents/The Witcher 3/gamesaves"
+  },
+  "savePattern": "*.sav",
+  "validation": {
+    "mode": "containsSubdirectory",
+    "value": "content"
+  },
+  "installFiles": {
+    "mode": "relativePaths",
+    "stripPrefix": null
+  },
+  "loadOrder": {
+    "supported": true,
+    "configFile": {
+      "relativeTo": "installPath",
+      "path": "Documents/The Witcher 3/modssettings",
+      "format": "iniSection",
+      "section": "mods"
+    }
+  },
+  "conflicts": "warn",
+  "launch": {
+    "steamAppId": 292030,
+    "knownExecutables": [
+      "bin/x64/witcher3.exe",
+      "bin/x64_vk/witcher3.exe"
+    ]
+  },
+  "detection": {
+    "steam": {
+      "appId": 292030,
+      "dirNames": ["The Witcher 3", "The Witcher 3 Wild Hunt"]
+    }
+  },
+  "proton": null
+}

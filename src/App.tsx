@@ -10,10 +10,11 @@ import ImportModDialog from './components/ImportModDialog';
 import DeleteModDialog from './components/DeleteModDialog';
 import RemoveGameDialog from './components/RemoveGameDialog';
 import BackupRestoreDialog from './components/BackupRestoreDialog';
+import ProfileDialog from './components/ProfileDialog';
+import ModInfoDialog from './components/ModInfoDialog';
 import ToastContainer from './components/ToastContainer';
 
-interface ImportResult { mod_id: string; mod_name: string; installed_files: string[]; warning: string | null; }
-interface ToggleResult { success: boolean; conflict: { level: string; conflicts_with: string[]; overlapping_files: string[] } | null; deploy_results: [string, boolean, string][] | null; }
+import type { ImportResult, ToggleResult } from './types';
 
 export default function App() {
   const [config, setConfig] = useState<AppConfig>({ version: 1, games: [] });
@@ -66,11 +67,11 @@ export default function App() {
   }, [config, selectedGameId, addToast, closeDialog]);
 
   const handleImportMod = useCallback(async (gameId: string, ap: string, mn: string) => {
-    try { const r = await invoke<ImportResult>('import_mod', { gameId, archivePath: ap, modName: mn }); const u = await invoke<AppConfig>('get_config'); setConfig(u); addToast('success', `Imported ${r.mod_name} (${r.installed_files.length} files)`); closeDialog(); } catch (e) { addToast(String(e).includes('already exists') ? 'warning' : 'error', `${e}`); }
+    try { const r = await invoke<ImportResult>('import_mod', { gameId, archivePath: ap, modName: mn }); const u = await invoke<AppConfig>('get_config'); setConfig(u); addToast('success', `Imported ${r.modName} (${r.installedFiles.length} files)`); closeDialog(); } catch (e) { addToast(String(e).includes('already exists') ? 'warning' : 'error', `${e}`); }
   }, [addToast, closeDialog]);
 
   const handleToggleMod = useCallback(async (gameId: string, modId: string) => {
-    try { const r = await invoke<ToggleResult>('toggle_mod', { gameId, modId }); const u = await invoke<AppConfig>('get_config'); setConfig(u); const m = u.games.find(g => g.id === gameId)?.mods.find(x => x.id === modId); addToast('success', `${m?.name ?? 'Mod'} ${m?.enabled ? 'enabled' : 'disabled'}`); if (r.conflict?.level === 'warn') addToast('warning', `Conflict: ${r.conflict.conflicts_with.join(', ')}`); if (r.conflict?.level === 'block') addToast('error', `Blocked: ${r.conflict.conflicts_with.join(', ')}`); r.deploy_results?.forEach(([n, ok, msg]) => { if (!ok) addToast('error', `${n}: ${msg}`); }); } catch (e) { addToast('error', `${e}`); }
+    try { const r = await invoke<ToggleResult>('toggle_mod', { gameId, modId }); const u = await invoke<AppConfig>('get_config'); setConfig(u); const m = u.games.find(g => g.id === gameId)?.mods.find(x => x.id === modId); addToast('success', `${m?.name ?? 'Mod'} ${m?.enabled ? 'enabled' : 'disabled'}`); if (r.conflict?.level === 'warn') addToast('warning', `Conflict: ${r.conflict.conflictsWith.join(', ')}`); if (r.conflict?.level === 'block') addToast('error', `Blocked: ${r.conflict.conflictsWith.join(', ')}`); r.deployResults?.forEach(([n, ok, msg]) => { if (!ok) addToast('error', `${n}: ${msg}`); }); } catch (e) { addToast('error', `${e}`); }
   }, [addToast]);
 
   const handleDeleteMod = useCallback(async (gameId: string, modId: string) => {
@@ -101,6 +102,29 @@ export default function App() {
     try { setConfig(await invoke<AppConfig>('get_config')); addToast('success', 'Config restored'); } catch (e) { addToast('error', `${e}`); }
   }, [addToast]);
 
+  const reloadConfig = useCallback(async () => {
+    try { setConfig(await invoke<AppConfig>('get_config')); } catch (e) { addToast('error', `${e}`); }
+  }, [addToast]);
+
+  const handleBatchToggle = useCallback(async (gameId: string, modIds: string[], enabled: boolean) => {
+    try {
+      const result = await invoke<{succeeded: string[]; failed: {modId: string; modName: string; reason: string; conflictingMods: string[]}[]}>('batch_toggle', { gameId, modIds, enabled });
+      const verb = enabled ? 'enabled' : 'disabled';
+      if (result.succeeded.length > 0) addToast('success', `${result.succeeded.length} mods ${verb}`);
+      result.failed.forEach(f => addToast('error', `${f.modName}: ${f.reason}${f.conflictingMods.length ? ` (${f.conflictingMods.join(', ')})` : ''}`));
+      await reloadConfig();
+      return result;
+    } catch (e) { addToast('error', `${e}`); throw e; }
+  }, [addToast, reloadConfig]);
+
+  const handleBatchDelete = useCallback(async (gameId: string, modIds: string[]) => {
+    try {
+      await invoke<AppConfig>('batch_delete', { gameId, modIds });
+      addToast('success', `${modIds.length} mods deleted`);
+      await reloadConfig();
+    } catch (e) { addToast('error', `${e}`); }
+  }, [addToast, reloadConfig]);
+
   return (
     <div className="app">
       <Sidebar games={config.games} selectedGameId={selectedGameId} onSelectGame={setSelectedGameId} onAddGame={() => openDialog('add-game')} />
@@ -114,7 +138,12 @@ export default function App() {
             onDeleteMod={(mid) => openDialog('delete-mod', selectedGame.id, mid)}
             onReorderMods={(mods) => handleReorder(selectedGame.id, mods.map(m => m.id))}
             onDeployAll={handleDeployAll} onPurgeAll={handlePurgeAll} onLaunchGame={handleLaunch}
-            onBackupRestore={() => openDialog('backup-restore')} />
+            onBackupRestore={() => openDialog('backup-restore')}
+            onBatchToggleMod={(ids, enabled) => handleBatchToggle(selectedGame.id, ids, enabled)}
+            onBatchDeleteMod={(ids) => handleBatchDelete(selectedGame.id, ids)}
+            onReloadConfig={reloadConfig}
+            onOpenProfiles={() => openDialog('profiles', selectedGame.id)}
+            onModInfo={(modId) => openDialog('mod-info', selectedGame.id, modId)} />
         ) : (
           <div className="mod-list-empty"><div className="mod-list-empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg></div><div className="mod-list-empty-title">Select a game</div><div className="mod-list-empty-desc">Choose a game from the sidebar to manage its mods.</div></div>
         )}
@@ -130,6 +159,22 @@ export default function App() {
       {dialog.mode === 'import-mod' && dialog.gameId && <ImportModDialog existingMods={selectedGame?.mods ?? []} onPickArchive={pickArchive} onImport={(ap, mn) => handleImportMod(dialog.gameId!, ap, mn)} onClose={closeDialog} sevenZAvailable={sevenZAvailable} />}
       {dialog.mode === 'delete-mod' && dialog.gameId && dialog.modId && <DeleteModDialog gameName={selectedGame?.name ?? ''} modName={selectedGame?.mods.find(m => m.id === dialog.modId)?.name ?? ''} onConfirm={() => handleDeleteMod(dialog.gameId!, dialog.modId!)} onClose={closeDialog} />}
       {dialog.mode === 'backup-restore' && <BackupRestoreDialog onClose={closeDialog} onRestored={handleRestored} />}
+      {dialog.mode === 'profiles' && dialog.gameId && (
+        <ProfileDialog
+          gameId={dialog.gameId}
+          profiles={selectedGame?.profiles ?? []}
+          activeProfileId={selectedGame?.activeProfileId}
+          onClose={closeDialog}
+          onProfileChanged={handleRestored}
+        />
+      )}
+      {dialog.mode === 'mod-info' && dialog.gameId && dialog.modId && (
+        (() => {
+          const m = selectedGame?.mods.find(x => x.id === dialog.modId);
+          if (!m) return null;
+          return <ModInfoDialog gameId={dialog.gameId!} mod={m} onClose={closeDialog} onSaved={handleRestored} />;
+        })()
+      )}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );

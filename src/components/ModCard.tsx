@@ -16,6 +16,9 @@ interface Props {
   onDragLeave?: (e: React.DragEvent) => void;
   onDrop?: (e: React.DragEvent) => void;
   conflictInfo: ConflictDisplay | null;
+  selected?: boolean;
+  onSelect?: (e: React.MouseEvent) => void;
+  onInfo?: () => void;
 }
 
 export default function ModCard({
@@ -29,7 +32,11 @@ export default function ModCard({
   onDragLeave,
   onDrop,
   conflictInfo,
+  selected,
+  onSelect,
+  onInfo,
 }: Props) {
+  const hasMetadata = !!(mod.version || mod.author || mod.category || mod.tags?.length);
   return (
     <div
       className={`mod-card${!mod.enabled ? ' disabled' : ''}`}
@@ -42,6 +49,22 @@ export default function ModCard({
       role="listitem"
       aria-label={`${mod.name}, ${mod.enabled ? 'enabled' : 'disabled'}${showPriority ? `, priority ${mod.priority}` : ''}`}
     >
+      <div
+        className={`mod-select-checkbox${selected ? ' selected' : ''}`}
+        onClick={(e) => { e.stopPropagation(); onSelect?.(e); }}
+        role="checkbox"
+        aria-checked={selected ?? false}
+        aria-label={`Select ${mod.name}`}
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect?.(e as unknown as React.MouseEvent); } }}
+      >
+        {selected && (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        )}
+      </div>
+
       {showPriority && mod.enabled && (
         <div className="mod-priority-handle" aria-label="Drag to reorder priority">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -60,7 +83,23 @@ export default function ModCard({
       )}
 
       <div className="mod-info">
-        <div className="mod-name">{mod.name}</div>
+        <div className="mod-name">
+          {mod.name}
+          {onInfo && (
+            <button className="btn btn-icon mod-info-btn" onClick={onInfo} aria-label={`Edit metadata for ${mod.name}`} title="Edit metadata" style={{ width: 20, height: 20, marginLeft: 'var(--space-1)' }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="12" height="12">
+                <circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
+              </svg>
+            </button>
+          )}
+        </div>
+        {hasMetadata && (
+          <div className="mod-metadata-line">
+            {mod.version && <span className="mod-metadata-tag version">v{mod.version}</span>}
+            {mod.author && <span className="mod-metadata-tag author">by {mod.author}</span>}
+            {mod.category && <span className="mod-metadata-tag category">{mod.category}</span>}
+          </div>
+        )}
         {mod.installedFiles.length > 0 && (
           <div className="mod-path">{mod.installedFiles[0]}{mod.installedFiles.length > 1 ? ` +${mod.installedFiles.length - 1} more` : ''}</div>
         )}

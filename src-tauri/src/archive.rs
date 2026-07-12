@@ -228,6 +228,52 @@ pub fn validate_witcher3(extract_dir: &Path) -> Result<PathBuf, String> {
     Err("No mod folder with a 'content/' subfolder found. Witcher 3 mods must contain a folder with 'content/' inside.".to_string())
 }
 
+/// Generic: validate that the extract dir contains files with the given extension.
+/// Returns the list of matching relative paths.
+pub fn validate_by_extension(extract_dir: &Path, extension: &str) -> Result<Vec<PathBuf>, String> {
+    let mut found = Vec::new();
+    collect_by_ext(extract_dir, extract_dir, extension, &mut found)
+        .map_err(|e| format!("Failed to scan archive: {}", e))?;
+    Ok(found)
+}
+
+fn collect_by_ext(base: &Path, dir: &Path, ext: &str, found: &mut Vec<PathBuf>) -> io::Result<()> {
+    if !dir.is_dir() { return Ok(()); }
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_by_ext(base, &path, ext, found)?;
+        } else if path.extension().map(|e| {
+            let e = e.to_string_lossy().to_lowercase();
+            e == ext.trim_start_matches('.')
+        }).unwrap_or(false) {
+            if let Ok(rel) = path.strip_prefix(base) {
+                found.push(rel.to_path_buf());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Generic: validate that the extract dir contains a subdirectory with the given name.
+/// Returns the path to the matching subdirectory.
+pub fn validate_subdirectory(extract_dir: &Path, subdir_name: &str) -> Result<PathBuf, String> {
+    if extract_dir.join(subdir_name).is_dir() {
+        return Ok(extract_dir.to_path_buf());
+    }
+    for entry in fs::read_dir(extract_dir)
+        .map_err(|e| format!("Failed to read extract dir: {}", e))?
+    {
+        let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+        let path = entry.path();
+        if path.is_dir() && path.join(subdir_name).is_dir() {
+            return Ok(path);
+        }
+    }
+    Err(format!("No folder with a '{}' subfolder found in the archive.", subdir_name))
+}
+
 /// Derive installed_files: paths relative to the game's mod directory
 /// (`Game::mod_dir`), which deploy joins them onto.
 /// For SoD2, each .pak file maps to `<pak_filename>` (flattened).
@@ -285,6 +331,45 @@ fn walk_relative(base: &Path, dir: &Path, files: &mut Vec<PathBuf>) -> io::Resul
         }
     }
     Ok(())
+}
+
+/// Try to extract a version string from an archive filename.
+/// Looks for common patterns:
+/// - "ModName-v1.4.2.zip" → "1.4.2"
+/// - "ModName-1.4.2-final.zip" → "1.4.2"
+/// - "ModName_v2.1.zip" → "2.1"
+/// - "ModName 3.0.zip" → "3.0"
+pub fn extract_version_from_filename(filename: &str) -> Option<String> {
+    let name = filename
+        .strip_suffix(".zip")
+        .or_else(|| filename.strip_suffix(".7z"))
+        .or_else(|| filename.strip_suffix(".rar"))
+        .unwrap_or(filename);
+
+    // Find version pattern: digits.digits[.digits]
+    let bytes = name.as_bytes();
+    let mut best: Option<(usize, usize)> = None;
+
+    let mut i = 0;
+    while i < bytes.len() {
+        // Look for start of a version-like digit sequence
+        if bytes[i].is_ascii_digit() {
+            let start = i;
+            let mut dots = 0u8;
+            while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.') {
+                if bytes[i] == b'.' { dots += 1; }
+                i += 1;
+            }
+            // Valid version: at least one dot, at least one digit each segment
+            if dots >= 1 && dots <= 2 && i - start >= 3 {
+                best = Some((start, i));
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    best.map(|(s, e)| name[s..e].to_string())
 }
 
 #[cfg(test)]

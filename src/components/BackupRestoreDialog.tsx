@@ -127,7 +127,7 @@ export default function BackupRestoreDialog({ onClose, onRestored }: Props) {
                       {formatDisplayTime(b.timestamp)}
                     </div>
                     <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: '2px' }}>
-                      {b.game_count} game{b.game_count !== 1 ? 's' : ''} · {b.mod_count} mod{b.mod_count !== 1 ? 's' : ''}
+                      {b.gameCount} game{b.gameCount !== 1 ? 's' : ''} · {b.modCount} mod{b.modCount !== 1 ? 's' : ''}
                     </div>
                   </div>
                   <button

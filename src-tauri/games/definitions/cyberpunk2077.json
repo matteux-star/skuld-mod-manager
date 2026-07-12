@@ -1,0 +1,40 @@
+{
+  "type": "cyberpunk2077",
+  "displayName": "Cyberpunk 2077",
+  "engine": "REDengine 4",
+  "icon": "cyber",
+  "supportStatus": "provisional",
+  "modDirectory": {
+    "relativeTo": "installPath",
+    "path": "archive/pc/mod"
+  },
+  "saveDirectory": {
+    "relativeTo": "installPath",
+    "path": "bin/x64/saves"
+  },
+  "savePattern": "*.dat",
+  "validation": {
+    "mode": "anyFiles",
+    "value": ""
+  },
+  "installFiles": {
+    "mode": "relativePaths",
+    "stripPrefix": null
+  },
+  "loadOrder": {
+    "supported": false,
+    "configFile": null
+  },
+  "conflicts": "warn",
+  "launch": {
+    "steamAppId": 1091500,
+    "knownExecutables": ["bin/x64/Cyberpunk2077.exe"]
+  },
+  "detection": {
+    "steam": {
+      "appId": 1091500,
+      "dirNames": ["Cyberpunk 2077"]
+    }
+  },
+  "proton": null
+}

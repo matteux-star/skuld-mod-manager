@@ -43,7 +43,7 @@ export default function SaveScanner({ gameId, gameName }: Props) {
       + ' ' + ts.substring(9, 11) + ':' + ts.substring(11, 13);
   };
 
-  const saveCount = saves.filter(s => s.is_autosave).length;
+  const saveCount = saves.filter(s => s.isAutosave).length;
   const manualCount = saves.length - saveCount;
 
   return (
@@ -125,7 +125,7 @@ export default function SaveScanner({ gameId, gameName }: Props) {
                   width: '6px',
                   height: '6px',
                   borderRadius: '50%',
-                  background: s.is_autosave ? 'var(--signal-amber)' : 'var(--signal-green)',
+                  background: s.isAutosave ? 'var(--signal-amber)' : 'var(--signal-green)',
                   flexShrink: 0,
                 }} />
                 <span style={{
@@ -137,15 +137,15 @@ export default function SaveScanner({ gameId, gameName }: Props) {
                 }}>
                   {s.name}
                 </span>
-                {s.is_quicksave && (
+                {s.isQuicksave && (
                   <span style={{ color: 'var(--signal-blue)', fontSize: '10px', flexShrink: 0 }}>Quick</span>
                 )}
-                {s.is_autosave && (
+                {s.isAutosave && (
                   <span style={{ color: 'var(--signal-amber)', fontSize: '10px', flexShrink: 0 }}>Auto</span>
                 )}
               </div>
               <div style={{ display: 'flex', gap: 'var(--space-3)', color: 'var(--text-muted)', flexShrink: 0 }}>
-                <span>{formatSize(s.size_bytes)}</span>
+                <span>{formatSize(s.sizeBytes)}</span>
                 <span>{formatTime(s.modified)}</span>
               </div>
             </div>

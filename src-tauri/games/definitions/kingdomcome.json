@@ -1,0 +1,40 @@
+{
+  "type": "kingdomcome",
+  "displayName": "Kingdom Come: Deliverance",
+  "engine": "CryEngine",
+  "icon": "sword",
+  "supportStatus": "provisional",
+  "modDirectory": {
+    "relativeTo": "installPath",
+    "path": "Mods"
+  },
+  "saveDirectory": {
+    "relativeTo": "installPath",
+    "path": "saves"
+  },
+  "savePattern": "*.whs",
+  "validation": {
+    "mode": "containsFileType",
+    "value": ".pak"
+  },
+  "installFiles": {
+    "mode": "flatFiles",
+    "filter": ".pak"
+  },
+  "loadOrder": {
+    "supported": false,
+    "configFile": null
+  },
+  "conflicts": "block",
+  "launch": {
+    "steamAppId": 379430,
+    "knownExecutables": ["bin/Win64/KingdomCome.exe"]
+  },
+  "detection": {
+    "steam": {
+      "appId": 379430,
+      "dirNames": ["KingdomComeDeliverance"]
+    }
+  },
+  "proton": null
+}

@@ -1,0 +1,40 @@
+{
+  "type": "stardewvalley",
+  "displayName": "Stardew Valley",
+  "engine": "XNA/MonoGame",
+  "icon": "farm",
+  "supportStatus": "provisional",
+  "modDirectory": {
+    "relativeTo": "installPath",
+    "path": "Mods"
+  },
+  "saveDirectory": {
+    "relativeTo": "installPath",
+    "path": "Saves"
+  },
+  "savePattern": "*",
+  "validation": {
+    "mode": "anyFiles",
+    "value": ""
+  },
+  "installFiles": {
+    "mode": "relativePaths",
+    "stripPrefix": null
+  },
+  "loadOrder": {
+    "supported": false,
+    "configFile": null
+  },
+  "conflicts": "warn",
+  "launch": {
+    "steamAppId": 413150,
+    "knownExecutables": ["Stardew Valley.exe", "StardewValley.exe"]
+  },
+  "detection": {
+    "steam": {
+      "appId": 413150,
+      "dirNames": ["Stardew Valley"]
+    }
+  },
+  "proton": null
+}

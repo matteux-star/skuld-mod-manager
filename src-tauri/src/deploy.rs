@@ -216,6 +216,8 @@ mod tests {
             path: game_path.to_string_lossy().to_string(),
             launch_path: None,
             support_status: "provisional".into(),
+            active_profile_id: None,
+            profiles: vec![],
             mods: vec![ModEntry {
                 id: "m".into(),
                 name: "CoolMod".into(),
@@ -223,6 +225,15 @@ mod tests {
                 enabled: true,
                 priority: 1,
                 installed_files: vec!["cool.pak".into()],
+                version: None,
+                author: None,
+                description: None,
+                source_url: None,
+                category: None,
+                tags: vec![],
+                installed_at: None,
+                updated_at: None,
+                relationships: vec![],
             }],
         };
 

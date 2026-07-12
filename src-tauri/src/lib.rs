@@ -7,8 +7,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 mod archive;
 mod config;
 mod conflicts;
+mod db;
+mod dependencies;
 mod deploy;
+mod detection;
+mod downloader;
 mod games;
+mod plugins;
+mod sync;
+mod update_check;
 
 pub use config::AppConfig;
 pub use games::{Game, GameRegistry, GameType};
@@ -41,14 +48,130 @@ fn ensure_dirs() -> std::io::Result<()> {
 // ═══════════════════════════════════════════════════════
 
 #[tauri::command]
+fn get_game_definitions() -> Result<Vec<games::GameDefinition>, String> {
+    Ok(games::all_definitions().into_iter().cloned().collect())
+}
+
+#[tauri::command]
+fn scan_for_games() -> Result<Vec<detection::DetectedGame>, String> {
+    Ok(detection::scan_steam())
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScriptExtenderStatus {
+    pub game_type: String,
+    pub extender_name: String,
+    pub short_name: String,
+    pub is_installed: bool,
+    pub website: String,
+    pub is_launcher: bool,
+}
+
+#[tauri::command]
+fn scan_plugins(game_id: String) -> Result<Vec<plugins::PluginInfo>, String> {
+    let cfg = config::load().map_err(|e| e.to_string())?;
+    let game = cfg.games.iter().find(|g| g.id == game_id).ok_or("Game not found")?;
+    let data_dir = std::path::PathBuf::from(&game.path).join("Data");
+    plugins::scan_plugins(&data_dir)
+}
+
+#[tauri::command]
+fn validate_plugins(plugins: Vec<plugins::PluginInfo>) -> Result<plugins::PluginValidation, String> {
+    Ok(plugins::validate_plugins(&plugins))
+}
+
+#[tauri::command]
+fn check_script_extenders(game_id: String) -> Result<Option<ScriptExtenderStatus>, String> {
+    let cfg = config::load().map_err(|e| e.to_string())?;
+    let game = cfg.games.iter().find(|g| g.id == game_id).ok_or("Game not found")?;
+    let install_path = PathBuf::from(&game.path);
+
+    for (gt, spec) in games::get_script_extenders() {
+        if gt == game.game_type {
+            let installed = spec.required_files.iter().any(|f| install_path.join(f).exists());
+            return Ok(Some(ScriptExtenderStatus {
+                game_type: game.game_type.clone(),
+                extender_name: spec.name.clone(),
+                short_name: spec.short_name.clone(),
+                is_installed: installed,
+                website: spec.website.clone(),
+                is_launcher: spec.is_launcher,
+            }));
+        }
+    }
+    Ok(None) // No extender defined for this game
+}
+
+#[tauri::command]
+fn start_download(
+    game_id: String,
+    game_type: String,
+    mod_name: String,
+    url: String,
+    filename: String,
+) -> Result<downloader::DownloadJob, String> {
+    downloader::start_download(game_id, game_type, mod_name, url, filename)
+}
+
+#[tauri::command]
+fn cancel_download(job_id: String) -> Result<(), String> {
+    downloader::cancel_download(job_id)
+}
+
+#[tauri::command]
+fn get_download_status() -> Result<Vec<downloader::DownloadJob>, String> {
+    downloader::get_download_status()
+}
+
+#[tauri::command]
+fn clear_completed_downloads() -> Result<(), String> {
+    downloader::clear_completed_downloads()
+}
+
+#[tauri::command]
+fn export_sync_manifest() -> Result<sync::SyncManifest, String> {
+    let cfg = config::load().map_err(|e| e.to_string())?;
+    Ok(sync::export_manifest(&cfg))
+}
+
+#[tauri::command]
+fn import_sync_manifest(manifest: sync::SyncManifest) -> Result<AppConfig, String> {
+    let mut cfg = config::load().map_err(|e| e.to_string())?;
+    let (applied, skipped) = sync::import_manifest(&mut cfg, &manifest);
+    config::save(&cfg).map_err(|e| e.to_string())?;
+    // Redeploy all games
+    for game in &cfg.games {
+        let _ = deploy::deploy_mods(game);
+    }
+    Ok(cfg)
+}
+
+#[tauri::command]
+async fn check_updates(game_id: String) -> Result<Vec<update_check::UpdateResult>, String> {
+    let cfg = config::load().map_err(|e| e.to_string())?;
+    update_check::check_updates(&game_id, &cfg).await
+}
+
+#[tauri::command]
+fn resolve_dependencies(
+    game_id: String,
+    mod_id: String,
+) -> Result<dependencies::DependencyResult, String> {
+    let cfg = config::load().map_err(|e| e.to_string())?;
+    let game = cfg.games.iter().find(|g| g.id == game_id).ok_or("Game not found")?;
+    let mod_entry = game.mods.iter().find(|m| m.id == mod_id).ok_or("Mod not found")?;
+    Ok(dependencies::resolve_enable(mod_entry, game))
+}
+
+#[tauri::command]
 fn get_config() -> Result<AppConfig, String> {
     config::load().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn add_game(name: String, path: String, game_type: String) -> Result<AppConfig, String> {
-    let gt: GameType = serde_json::from_str(&format!("\"{}\"", game_type))
-        .map_err(|_| format!("Unknown game type: {}", game_type))?;
+    let gt = GameType::from_str(&game_type);
 
     // Verify the path before saving
     deploy::verify_game_path(&gt, &PathBuf::from(&path))?;
@@ -63,6 +186,8 @@ fn add_game(name: String, path: String, game_type: String) -> Result<AppConfig, 
         launch_path: None,
         support_status: support_status.to_string(),
         mods: vec![],
+        active_profile_id: None,
+        profiles: vec![],
     };
     cfg.games.push(game);
     config::save(&cfg).map_err(|e| e.to_string())?;
@@ -84,6 +209,7 @@ fn remove_game(game_id: String) -> Result<AppConfig, String> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ImportResult {
     pub mod_id: String,
     pub mod_name: String,
@@ -127,7 +253,28 @@ fn import_mod(
             let mod_root = archive::validate_witcher3(&extract_dir)?;
             archive::derive_installed_files(&mod_root, "witcher3", &mod_name)?
         }
-        _ => return Err(format!("Unknown game type: {}", game.game_type)),
+        // Generic games: use definition-based validation
+        other => {
+            let def = games::get_definition(other)
+                .ok_or_else(|| format!("Unknown game type: {}", other))?;
+            match def.validation.mode.as_str() {
+                "containsFileType" => {
+                    let ext = def.validation.value.as_str();
+                    let found = archive::validate_by_extension(&extract_dir, ext)?;
+                    if found.is_empty() {
+                        return Err(format!("No {} files found in archive", ext));
+                    }
+                }
+                "containsSubdirectory" => {
+                    let subdir = def.validation.value.as_str();
+                    archive::validate_subdirectory(&extract_dir, subdir)?;
+                }
+                _ => {
+                    // "anyFiles" — accept anything, derive all files
+                }
+            }
+            archive::derive_installed_files(&extract_dir, other, &mod_name)?
+        }
     };
 
     if installed_files.is_empty() {
@@ -137,16 +284,36 @@ fn import_mod(
     // Add mod to config (disabled by default)
     let priority = game.mods.len() + 1;
     let mod_id = uuid::Uuid::new_v4().to_string();
+
+    // Extract version from archive filename
+    let archive_name = archive_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let extracted_version = archive::extract_version_from_filename(&archive_name);
+
+    // Timestamp
+    let now_ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
     let mod_entry = config::ModEntry {
         id: mod_id.clone(),
         name: mod_name.clone(),
-        archive_source: archive_path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "unknown".to_string()),
+        archive_source: archive_name,
         enabled: false,
         priority,
         installed_files: installed_files.clone(),
+        version: extracted_version,
+        author: None,
+        description: None,
+        source_url: None,
+        category: None,
+        tags: vec![],
+        installed_at: Some(format_ts(now_ts)),
+        updated_at: None,
+        relationships: vec![],
     };
 
     let game = cfg.games.iter_mut().find(|g| g.id == game_id).unwrap();
@@ -162,6 +329,7 @@ fn import_mod(
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ToggleResult {
     pub success: bool,
     pub conflict: Option<ConflictInfo>,
@@ -169,6 +337,7 @@ pub struct ToggleResult {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConflictInfo {
     pub level: String, // "warn", "block", or "none"
     pub conflicts_with: Vec<String>,
@@ -247,6 +416,8 @@ fn toggle_mod(game_id: String, mod_id: String) -> Result<ToggleResult, String> {
             launch_path: None,
             support_status: cfg.games[game_idx].support_status.clone(),
             mods: cfg.games[game_idx].mods.clone(),
+            active_profile_id: None,
+            profiles: vec![],
         };
         let deploy_results = deploy::deploy_mods(&game).ok();
 
@@ -289,6 +460,8 @@ fn toggle_mod(game_id: String, mod_id: String) -> Result<ToggleResult, String> {
         launch_path: None,
         support_status: cfg.games[game_idx].support_status.clone(),
         mods: cfg.games[game_idx].mods.clone(),
+        active_profile_id: None,
+        profiles: vec![],
     };
     let mod_entry = game.mods.iter().find(|m| m.id == mod_id).unwrap();
 
@@ -323,6 +496,216 @@ fn delete_mod(game_id: String, mod_id: String) -> Result<AppConfig, String> {
     }
 
     game.mods.retain(|m| m.id != mod_id);
+    config::save(&cfg).map_err(|e| e.to_string())?;
+    Ok(cfg)
+}
+
+// ═══════════════════════════════════════════════════════
+// Batch Operations
+// ═══════════════════════════════════════════════════════
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchToggleResult {
+    pub succeeded: Vec<String>,
+    pub failed: Vec<BatchToggleFailure>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchToggleFailure {
+    pub mod_id: String,
+    pub mod_name: String,
+    pub reason: String,
+    pub conflicting_mods: Vec<String>,
+}
+
+#[tauri::command]
+fn batch_toggle(
+    game_id: String,
+    mod_ids: Vec<String>,
+    enabled: bool,
+) -> Result<BatchToggleResult, String> {
+    let mut cfg = config::load().map_err(|e| e.to_string())?;
+
+    let game_idx = cfg
+        .games
+        .iter()
+        .position(|g| g.id == game_id)
+        .ok_or("Game not found")?;
+
+    let has_load_order = {
+        let gt: GameType = serde_json::from_str(&format!("\"{}\"", cfg.games[game_idx].game_type))
+            .map_err(|e| format!("Unknown game type: {}", e))?;
+        GameRegistry::get(&gt).has_load_order()
+    };
+    let game_name = cfg.games[game_idx].name.clone();
+    let game_type = cfg.games[game_idx].game_type.clone();
+    let game_path = cfg.games[game_idx].path.clone();
+
+    if enabled {
+        // Build expanded "would-be-enabled" set for conflict checking within the batch
+        let mut would_be_enabled: Vec<config::ModEntry> = cfg.games[game_idx]
+            .mods
+            .iter()
+            .filter(|m| m.enabled && !mod_ids.contains(&m.id))
+            .cloned()
+            .collect();
+
+        let mut succeeded = Vec::new();
+        let mut failed = Vec::new();
+
+        for mod_id in &mod_ids {
+            let mod_entry = match cfg.games[game_idx].mods.iter().find(|m| &m.id == mod_id) {
+                Some(m) => m.clone(),
+                None => {
+                    failed.push(BatchToggleFailure {
+                        mod_id: mod_id.clone(),
+                        mod_name: "unknown".to_string(),
+                        reason: "Mod not found".to_string(),
+                        conflicting_mods: vec![],
+                    });
+                    continue;
+                }
+            };
+
+            if mod_entry.enabled {
+                // Already enabled — skip
+                succeeded.push(mod_entry.name.clone());
+                continue;
+            }
+
+            let mut check_entry = mod_entry.clone();
+            check_entry.enabled = true;
+
+            let conflict = conflicts::check_enable_conflict(
+                &check_entry,
+                &would_be_enabled,
+                has_load_order,
+            );
+
+            if conflict.level == "block" {
+                failed.push(BatchToggleFailure {
+                    mod_id: mod_entry.id.clone(),
+                    mod_name: mod_entry.name.clone(),
+                    reason: "Blocked by file conflicts".to_string(),
+                    conflicting_mods: conflict.conflicts_with,
+                });
+                continue;
+            }
+
+            // Enable it
+            cfg.games[game_idx]
+                .mods
+                .iter_mut()
+                .find(|m| m.id == *mod_id)
+                .unwrap()
+                .enabled = true;
+            would_be_enabled.push(check_entry);
+            succeeded.push(mod_entry.name);
+        }
+
+        config::save(&cfg).map_err(|e| e.to_string())?;
+
+        // Deploy all enabled mods
+        let game = config::GameEntry {
+            id: game_id.clone(),
+            game_type,
+            name: game_name,
+            path: game_path,
+            launch_path: None,
+            support_status: cfg.games[game_idx].support_status.clone(),
+            mods: cfg.games[game_idx].mods.clone(),
+            active_profile_id: None,
+            profiles: vec![],
+        };
+        let _ = deploy::deploy_mods(&game);
+
+        Ok(BatchToggleResult { succeeded, failed })
+    } else {
+        // Disabling — simple: set enabled=false, remove symlinks
+        let mut succeeded = Vec::new();
+        let mut failed = Vec::new();
+
+        for mod_id in &mod_ids {
+            let mod_entry = match cfg.games[game_idx].mods.iter().find(|m| &m.id == mod_id) {
+                Some(m) => m.clone(),
+                None => {
+                    failed.push(BatchToggleFailure {
+                        mod_id: mod_id.clone(),
+                        mod_name: "unknown".to_string(),
+                        reason: "Mod not found".to_string(),
+                        conflicting_mods: vec![],
+                    });
+                    continue;
+                }
+            };
+
+            if !mod_entry.enabled {
+                succeeded.push(mod_entry.name);
+                continue;
+            }
+
+            cfg.games[game_idx]
+                .mods
+                .iter_mut()
+                .find(|m| m.id == *mod_id)
+                .unwrap()
+                .enabled = false;
+
+            // Remove symlinks
+            let game = config::GameEntry {
+                id: game_id.clone(),
+                game_type: game_type.clone(),
+                name: game_name.clone(),
+                path: game_path.clone(),
+                launch_path: None,
+                support_status: cfg.games[game_idx].support_status.clone(),
+                mods: cfg.games[game_idx].mods.clone(),
+                active_profile_id: None,
+                profiles: vec![],
+            };
+            let _ = deploy::remove_symlinks(&game, &mod_entry);
+            succeeded.push(mod_entry.name);
+        }
+
+        // Renumber priorities if needed
+        if has_load_order {
+            let mut enabled: Vec<&mut config::ModEntry> = cfg.games[game_idx]
+                .mods
+                .iter_mut()
+                .filter(|m| m.enabled)
+                .collect();
+            enabled.sort_by_key(|m| m.priority);
+            for (i, m) in enabled.iter_mut().enumerate() {
+                m.priority = i + 1;
+            }
+        }
+
+        config::save(&cfg).map_err(|e| e.to_string())?;
+
+        Ok(BatchToggleResult { succeeded, failed })
+    }
+}
+
+#[tauri::command]
+fn batch_delete(game_id: String, mod_ids: Vec<String>) -> Result<AppConfig, String> {
+    let mut cfg = config::load().map_err(|e| e.to_string())?;
+    let game = cfg
+        .games
+        .iter_mut()
+        .find(|g| g.id == game_id)
+        .ok_or("Game not found")?;
+
+    for mod_id in &mod_ids {
+        if let Some(mod_entry) = game.mods.iter().find(|m| &m.id == mod_id) {
+            if mod_entry.enabled {
+                let _ = deploy::remove_symlinks(game, mod_entry);
+            }
+        }
+    }
+
+    game.mods.retain(|m| !mod_ids.contains(&m.id));
     config::save(&cfg).map_err(|e| e.to_string())?;
     Ok(cfg)
 }
@@ -376,8 +759,7 @@ fn edit_game_path(game_id: String, new_path: String) -> Result<AppConfig, String
 
 #[tauri::command]
 fn verify_game_path(game_type: String, path: String) -> Result<bool, String> {
-    let gt: GameType = serde_json::from_str(&format!("\"{}\"", game_type))
-        .map_err(|_| format!("Unknown game type: {}", game_type))?;
+    let gt = GameType::from_str(&game_type);
     deploy::verify_game_path(&gt, &PathBuf::from(&path))?;
     Ok(true)
 }
@@ -466,6 +848,173 @@ fn launch_game(game_id: String) -> Result<String, String> {
 }
 
 // ═══════════════════════════════════════════════════════
+// Profile Commands
+// ═══════════════════════════════════════════════════════
+
+#[tauri::command]
+fn save_config(config: AppConfig) -> Result<(), String> {
+    // Use the existing config from the caller (full config serialized from frontend).
+    // Frontend sends the AppConfig it already has; save it.
+    config::save(&config).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn create_profile(game_id: String, name: String) -> Result<AppConfig, String> {
+    let mut cfg = config::load().map_err(|e| e.to_string())?;
+    let game = cfg
+        .games
+        .iter_mut()
+        .find(|g| g.id == game_id)
+        .ok_or("Game not found")?;
+
+    let mod_states: Vec<config::ModState> = game
+        .mods
+        .iter()
+        .map(|m| config::ModState {
+            mod_id: m.id.clone(),
+            enabled: m.enabled,
+            priority: m.priority,
+        })
+        .collect();
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    // Simple ISO-ish timestamp
+    let ts = format_ts(now);
+
+    let profile = config::Profile {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: name.clone(),
+        game_id: game_id.clone(),
+        mod_states,
+        created_at: ts,
+    };
+
+    game.profiles.push(profile);
+    game.active_profile_id = game.profiles.last().map(|p| p.id.clone());
+    config::save(&cfg).map_err(|e| e.to_string())?;
+    Ok(cfg)
+}
+
+#[tauri::command]
+fn delete_profile(game_id: String, profile_id: String) -> Result<AppConfig, String> {
+    let mut cfg = config::load().map_err(|e| e.to_string())?;
+    let game = cfg
+        .games
+        .iter_mut()
+        .find(|g| g.id == game_id)
+        .ok_or("Game not found")?;
+
+    let was_active = game.active_profile_id.as_deref() == Some(&profile_id);
+    game.profiles.retain(|p| p.id != profile_id);
+    if was_active {
+        game.active_profile_id = None;
+    }
+    config::save(&cfg).map_err(|e| e.to_string())?;
+    Ok(cfg)
+}
+
+#[tauri::command]
+fn update_mod_metadata(
+    game_id: String,
+    mod_id: String,
+    name: Option<String>,
+    version: Option<String>,
+    author: Option<String>,
+    description: Option<String>,
+    source_url: Option<String>,
+    category: Option<String>,
+    tags: Option<Vec<String>>,
+) -> Result<AppConfig, String> {
+    let mut cfg = config::load().map_err(|e| e.to_string())?;
+    let game = cfg
+        .games
+        .iter_mut()
+        .find(|g| g.id == game_id)
+        .ok_or("Game not found")?;
+    let mod_entry = game
+        .mods
+        .iter_mut()
+        .find(|m| m.id == mod_id)
+        .ok_or("Mod not found")?;
+
+    if let Some(n) = name { mod_entry.name = n; }
+    mod_entry.version = version;
+    mod_entry.author = author;
+    mod_entry.description = description;
+    mod_entry.source_url = source_url;
+    mod_entry.category = category;
+    if let Some(t) = tags { mod_entry.tags = t; }
+
+    let now_ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    mod_entry.updated_at = Some(format_ts(now_ts));
+
+    config::save(&cfg).map_err(|e| e.to_string())?;
+    Ok(cfg)
+}
+
+#[tauri::command]
+fn rename_profile(game_id: String, profile_id: String, name: String) -> Result<AppConfig, String> {
+    let mut cfg = config::load().map_err(|e| e.to_string())?;
+    let game = cfg
+        .games
+        .iter_mut()
+        .find(|g| g.id == game_id)
+        .ok_or("Game not found")?;
+    let profile = game
+        .profiles
+        .iter_mut()
+        .find(|p| p.id == profile_id)
+        .ok_or("Profile not found")?;
+    profile.name = name;
+    config::save(&cfg).map_err(|e| e.to_string())?;
+    Ok(cfg)
+}
+
+#[tauri::command]
+fn apply_profile(game_id: String, profile_id: String) -> Result<AppConfig, String> {
+    let mut cfg = config::load().map_err(|e| e.to_string())?;
+    let game = cfg
+        .games
+        .iter_mut()
+        .find(|g| g.id == game_id)
+        .ok_or("Game not found")?;
+
+    let profile = game
+        .profiles
+        .iter()
+        .find(|p| p.id == profile_id)
+        .ok_or("Profile not found")?
+        .clone();
+
+    // Purge current symlinks
+    let _ = deploy::remove_all_symlinks(game);
+
+    // Apply profile states to mods
+    for ms in &profile.mod_states {
+        if let Some(mod_entry) = game.mods.iter_mut().find(|m| m.id == ms.mod_id) {
+            mod_entry.enabled = ms.enabled;
+            mod_entry.priority = ms.priority;
+        }
+    }
+
+    game.active_profile_id = Some(profile_id);
+
+    config::save(&cfg).map_err(|e| e.to_string())?;
+
+    // Redeploy
+    let game_ref = cfg.games.iter().find(|g| g.id == game_id).unwrap();
+    let _ = deploy::deploy_mods(game_ref);
+
+    Ok(cfg)
+}
+
+// ═══════════════════════════════════════════════════════
 // Backup / Restore Commands
 // ═══════════════════════════════════════════════════════
 
@@ -474,6 +1023,7 @@ fn backups_dir() -> PathBuf {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BackupInfo {
     pub filename: String,
     pub timestamp: String,
@@ -629,6 +1179,7 @@ fn is_leap(year: i64) -> bool {
 // ═══════════════════════════════════════════════════════
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SaveFile {
     pub name: String,
     pub path: String,
@@ -721,15 +1272,31 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .setup(|_app| {
             ensure_dirs().expect("Failed to create config directories");
+            db::init().expect("Failed to initialize database");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_game_definitions,
+            scan_for_games,
+            resolve_dependencies,
+            check_updates,
+            check_script_extenders,
+            scan_plugins,
+            validate_plugins,
+            export_sync_manifest,
+            import_sync_manifest,
+            start_download,
+            cancel_download,
+            get_download_status,
+            clear_completed_downloads,
             get_config,
             add_game,
             remove_game,
             import_mod,
             toggle_mod,
             delete_mod,
+            batch_toggle,
+            batch_delete,
             reorder_mods,
             edit_game_path,
             verify_game_path,
@@ -740,6 +1307,12 @@ pub fn run() {
             purge_all,
             set_launch_path,
             launch_game,
+            save_config,
+            update_mod_metadata,
+            create_profile,
+            delete_profile,
+            rename_profile,
+            apply_profile,
             backup_config,
             list_backups,
             restore_config,

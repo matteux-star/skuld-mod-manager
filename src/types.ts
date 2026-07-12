@@ -8,8 +8,30 @@ export interface ModEntry {
   enabled: boolean;
   priority: number;
   installedFiles: string[];
+  version?: string;
+  author?: string;
+  description?: string;
+  sourceUrl?: string;
+  category?: string;
+  tags: string[];
+  installedAt?: string;
+  updatedAt?: string;
   conflictState?: 'none' | 'warn' | 'block';
   conflictWith?: string[];
+}
+
+export interface ModState {
+  modId: string;
+  enabled: boolean;
+  priority: number;
+}
+
+export interface Profile {
+  id: string;
+  name: string;
+  gameId: string;
+  modStates: ModState[];
+  createdAt: string;
 }
 
 export interface GameEntry {
@@ -20,6 +42,8 @@ export interface GameEntry {
   launchPath?: string;
   supportStatus: SupportStatus;
   mods: ModEntry[];
+  activeProfileId?: string;
+  profiles: Profile[];
 }
 
 export interface AppConfig {
@@ -60,6 +84,8 @@ export type DialogMode =
   | 'update-mod'
   | 'delete-mod'
   | 'backup-restore'
+  | 'profiles'
+  | 'mod-info'
   | null;
 
 export interface DialogState {
@@ -71,15 +97,15 @@ export interface DialogState {
 export interface BackupInfo {
   filename: string;
   timestamp: string;
-  game_count: number;
-  mod_count: number;
+  gameCount: number;
+  modCount: number;
 }
 
 export interface SaveFile {
   name: string;
   path: string;
-  size_bytes: number;
+  sizeBytes: number;
   modified: string;
-  is_autosave: boolean;
-  is_quicksave: boolean;
+  isAutosave: boolean;
+  isQuicksave: boolean;
 }

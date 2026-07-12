@@ -5,6 +5,7 @@ use std::io;
 use crate::config_path;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ModEntry {
     pub id: String,
     pub name: String,
@@ -12,9 +13,58 @@ pub struct ModEntry {
     pub enabled: bool,
     pub priority: usize,
     pub installed_files: Vec<String>,
+    // Metadata (v4)
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub source_url: Option<String>,
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub installed_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+    // Relationships (v5)
+    #[serde(default)]
+    pub relationships: Vec<ModRelationEntry>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ModRelationEntry {
+    pub target_mod_id: Option<String>,
+    pub target_mod_name: Option<String>,
+    pub relation_type: String, // "requires" | "conflicts" | "recommends" | "loads_after" | "loads_before"
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ModState {
+    pub mod_id: String,
+    pub enabled: bool,
+    pub priority: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Profile {
+    pub id: String,
+    pub name: String,
+    pub game_id: String,
+    pub mod_states: Vec<ModState>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct GameEntry {
     pub id: String,
     #[serde(rename = "type")]
@@ -25,6 +75,10 @@ pub struct GameEntry {
     pub launch_path: Option<String>,
     pub support_status: String,
     pub mods: Vec<ModEntry>,
+    #[serde(default)]
+    pub active_profile_id: Option<String>,
+    #[serde(default)]
+    pub profiles: Vec<Profile>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -33,9 +87,12 @@ pub struct AppConfig {
     pub games: Vec<GameEntry>,
 }
 
-/// Current config schema version. v2 changed installed_files from
-/// game-root-relative (with mod-dir prefix baked in) to mod-dir-relative.
-pub const CONFIG_VERSION: u32 = 2;
+/// Current config schema version.
+/// v1 → v2: stripped mod-dir prefix from installed_files
+/// v2 → v3: added profiles + active_profile_id to GameEntry
+/// v3 → v4: added metadata fields to ModEntry (all Optional)
+/// v4 → v5: added relationships to ModEntry (serde default = empty vec)
+pub const CONFIG_VERSION: u32 = 5;
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -46,8 +103,7 @@ impl Default for AppConfig {
     }
 }
 
-/// Migrate a v1 config in place: strip the mod-dir prefix that v1 stored
-/// inside each installed_files entry.
+/// Migrate a v1 config: strip mod-dir prefixes.
 fn migrate_v1(config: &mut AppConfig) {
     for game in &mut config.games {
         let prefix = match game.game_type.as_str() {
@@ -63,39 +119,47 @@ fn migrate_v1(config: &mut AppConfig) {
             }
         }
     }
+    config.version = 2;
+}
+
+/// Migrate v2 → v3: add empty profiles vec and None active_profile_id.
+fn migrate_v2(config: &mut AppConfig) {
+    for game in &mut config.games {
+        game.active_profile_id = None;
+        game.profiles = Vec::new();
+    }
     config.version = CONFIG_VERSION;
 }
 
 pub fn load() -> io::Result<AppConfig> {
+    // Delegate to SQLite if DB exists, otherwise fall back to JSON migration
+    crate::db::load_config()
+        .or_else(|_| load_json())
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+}
+
+fn load_json() -> Result<AppConfig, String> {
     let path = config_path();
     if !path.exists() {
         let default = AppConfig::default();
-        save(&default)?;
+        crate::db::save_config(&default).map_err(|e| format!("Save: {}", e))?;
         return Ok(default);
     }
-    let data = fs::read_to_string(&path)?;
-    // A corrupt config must surface as an error — silently resetting would
-    // orphan the mod library.
+    let data = fs::read_to_string(&path).map_err(|e| format!("Read: {}", e))?;
     let mut config: AppConfig = serde_json::from_str(&data)
-        .map_err(|e| io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("Config file at {} is corrupt: {}", path.display(), e),
-        ))?;
-    if config.version < 2 {
-        migrate_v1(&mut config);
-        save(&config)?;
-    }
+        .map_err(|e| format!("Config at {} is corrupt: {}", path.display(), e))?;
+    if config.version < 2 { migrate_v1(&mut config); }
+    if config.version < 3 { migrate_v2(&mut config); }
+    if config.version < 4 { config.version = 4; }
+    if config.version < 5 { config.version = CONFIG_VERSION; }
+    // Save to DB
+    crate::db::save_config(&config).map_err(|e| format!("DB save: {}", e))?;
     Ok(config)
 }
 
 pub fn save(config: &AppConfig) -> io::Result<()> {
-    let path = config_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let data = serde_json::to_string_pretty(config)?;
-    fs::write(&path, data)?;
-    Ok(())
+    crate::db::save_config(config)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
 }
 
 #[cfg(test)]
@@ -109,20 +173,20 @@ mod tests {
             "games": [
                 {
                     "id": "g1", "type": "sod2", "name": "SoD2", "path": "/x",
-                    "support_status": "provisional",
+                    "supportStatus": "provisional",
                     "mods": [{
-                        "id": "m1", "name": "Mod", "archive_source": "a.zip",
+                        "id": "m1", "name": "Mod", "archiveSource": "a.zip",
                         "enabled": true, "priority": 1,
-                        "installed_files": ["Content/Paks/~mods/foo.pak"]
+                        "installedFiles": ["Content/Paks/~mods/foo.pak"]
                     }]
                 },
                 {
                     "id": "g2", "type": "witcher3", "name": "W3", "path": "/y",
-                    "support_status": "verified",
+                    "supportStatus": "verified",
                     "mods": [{
-                        "id": "m2", "name": "Mod2", "archive_source": "b.zip",
+                        "id": "m2", "name": "Mod2", "archiveSource": "b.zip",
                         "enabled": true, "priority": 1,
-                        "installed_files": ["Mods/modBar/content/blob0.bundle"]
+                        "installedFiles": ["Mods/modBar/content/blob0.bundle"]
                     }]
                 }
             ]
@@ -130,7 +194,7 @@ mod tests {
 
         migrate_v1(&mut cfg);
 
-        assert_eq!(cfg.version, CONFIG_VERSION);
+        assert_eq!(cfg.version, 2); // v1→v2 migration sets version to 2
         assert_eq!(cfg.games[0].mods[0].installed_files, vec!["foo.pak"]);
         assert_eq!(cfg.games[1].mods[0].installed_files, vec!["modBar/content/blob0.bundle"]);
     }

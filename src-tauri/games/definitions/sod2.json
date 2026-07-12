@@ -1,0 +1,43 @@
+{
+  "type": "sod2",
+  "displayName": "State of Decay 2",
+  "engine": "Unreal Engine 4",
+  "icon": "zombie",
+  "supportStatus": "provisional",
+  "modDirectory": {
+    "relativeTo": "protonPrefix",
+    "path": "drive_c/users/steamuser/AppData/Local/StateOfDecay2/Saved/Paks"
+  },
+  "saveDirectory": {
+    "relativeTo": "protonPrefix",
+    "path": "drive_c/users/steamuser/AppData/Local/StateOfDecay2/Saved/SaveGames"
+  },
+  "savePattern": "*.sav",
+  "validation": {
+    "mode": "containsFileType",
+    "value": ".pak"
+  },
+  "installFiles": {
+    "mode": "flatFiles",
+    "filter": ".pak"
+  },
+  "loadOrder": {
+    "supported": false,
+    "configFile": null
+  },
+  "conflicts": "block",
+  "launch": {
+    "steamAppId": 495420,
+    "knownExecutables": ["StateOfDecay2.exe"]
+  },
+  "detection": {
+    "steam": {
+      "appId": 495420,
+      "dirNames": ["State of Decay 2", "StateOfDecay2"]
+    }
+  },
+  "proton": {
+    "appId": 495420,
+    "relativeExePath": "StateOfDecay2.exe"
+  }
+}

@@ -1,4 +1,13 @@
 import { useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+
+interface DetectedGame {
+  gameType: string;
+  displayName: string;
+  installPath: string;
+  source: string;
+  sourceDetail: string;
+}
 
 interface Props {
   onPickDirectory: () => Promise<string | null>;
@@ -12,6 +21,17 @@ export default function AddGameDialog({ onPickDirectory, onAdd, onClose }: Props
   const [type, setType] = useState<'witcher3' | 'sod2'>('witcher3');
   const [error, setError] = useState('');
   const [picking, setPicking] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [detected, setDetected] = useState<DetectedGame[]>([]);
+
+  const handleScan = async () => {
+    setScanning(true);
+    try {
+      const results = await invoke<DetectedGame[]>('scan_for_games');
+      setDetected(results);
+    } catch (e) { setError(String(e)); }
+    setScanning(false);
+  };
 
   const handlePick = async () => {
     setPicking(true);
@@ -24,6 +44,10 @@ export default function AddGameDialog({ onPickDirectory, onAdd, onClose }: Props
         if (folderName) setName(folderName);
       }
     }
+  };
+
+  const handleDetectedAdd = (d: DetectedGame) => {
+    onAdd(d.displayName, d.installPath, d.gameType);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -49,6 +73,30 @@ export default function AddGameDialog({ onPickDirectory, onAdd, onClose }: Props
 
         <form onSubmit={handleSubmit}>
           <div className="dialog-body">
+            {/* ── Auto-detection ── */}
+            <div style={{ marginBottom: 'var(--space-4)' }}>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={handleScan} disabled={scanning} style={{ width: '100%' }}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
+                  <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                {scanning ? 'Scanning Steam...' : 'Scan for Games'}
+              </button>
+              {detected.length > 0 && (
+                <div className="detected-list">
+                  {detected.map(d => (
+                    <div key={d.gameType} className="detected-item" onClick={() => handleDetectedAdd(d)}>
+                      <div className="detected-item-left">
+                        <span className="detected-name">{d.displayName}</span>
+                        <span className="detected-path">{d.installPath}</span>
+                        <span className="detected-source">{d.sourceDetail}</span>
+                      </div>
+                      <button type="button" className="btn btn-primary btn-sm">Add</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="input-group">
               <label className="input-label" htmlFor="game-type">Game</label>
               <select id="game-type" className="input" value={type} onChange={e => setType(e.target.value as 'witcher3' | 'sod2')} style={{ appearance: 'none', cursor: 'pointer' }}>
