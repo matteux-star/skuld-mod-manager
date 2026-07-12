@@ -7,7 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use crate::config::{AppConfig, GameEntry, ModEntry, Profile, ModState, ModRelationEntry};
+use crate::config::{AppConfig, AppSettings, GameEntry, ModEntry, Profile, ModState, ModRelationEntry};
 use crate::config_dir;
 
 lazy_static::lazy_static! {
@@ -109,6 +109,15 @@ fn create_schema(conn: &Connection) -> Result<(), String> {
         );
         CREATE TABLE IF NOT EXISTS schema_version (
             version INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS app_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            launch_on_startup INTEGER NOT NULL DEFAULT 0,
+            check_updates INTEGER NOT NULL DEFAULT 1,
+            deploy_method TEXT NOT NULL DEFAULT 'symlink',
+            warn_if_running INTEGER NOT NULL DEFAULT 1,
+            auto_backup INTEGER NOT NULL DEFAULT 1,
+            backup_retention INTEGER NOT NULL DEFAULT 5
         );"
     ).map_err(|e| format!("Schema: {}", e))?;
 
@@ -369,6 +378,57 @@ pub fn save_config(cfg: &AppConfig) -> Result<(), String> {
     }
 
     tx.commit().map_err(|e| format!("Commit: {}", e))?;
+    Ok(())
+}
+
+pub fn load_settings() -> Result<AppSettings, String> {
+    let guard = conn()?;
+    let conn_ = guard.as_ref().ok_or("DB not initialized")?;
+    let result = conn_.query_row(
+        "SELECT launch_on_startup, check_updates, deploy_method, warn_if_running, auto_backup, backup_retention FROM app_settings WHERE id = 1",
+        [],
+        |row| Ok(AppSettings {
+            launch_on_startup: row.get::<_, i32>(0)? != 0,
+            check_updates: row.get::<_, i32>(1)? != 0,
+            deploy_method: row.get(2)?,
+            warn_if_running: row.get::<_, i32>(3)? != 0,
+            auto_backup: row.get::<_, i32>(4)? != 0,
+            backup_retention: row.get::<_, i64>(5)? as u32,
+        }),
+    );
+    match result {
+        Ok(s) => Ok(s),
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            let defaults = AppSettings::default();
+            save_settings(&defaults)?;
+            Ok(defaults)
+        }
+        Err(e) => Err(format!("Settings load: {}", e)),
+    }
+}
+
+pub fn save_settings(s: &AppSettings) -> Result<(), String> {
+    let guard = conn()?;
+    let conn_ = guard.as_ref().ok_or("DB not initialized")?;
+    conn_.execute(
+        "INSERT INTO app_settings (id, launch_on_startup, check_updates, deploy_method, warn_if_running, auto_backup, backup_retention)
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(id) DO UPDATE SET
+            launch_on_startup = excluded.launch_on_startup,
+            check_updates = excluded.check_updates,
+            deploy_method = excluded.deploy_method,
+            warn_if_running = excluded.warn_if_running,
+            auto_backup = excluded.auto_backup,
+            backup_retention = excluded.backup_retention",
+        params![
+            s.launch_on_startup as i32,
+            s.check_updates as i32,
+            s.deploy_method,
+            s.warn_if_running as i32,
+            s.auto_backup as i32,
+            s.backup_retention as i64,
+        ],
+    ).map_err(|e| format!("Settings save: {}", e))?;
     Ok(())
 }
 

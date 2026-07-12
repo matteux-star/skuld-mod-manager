@@ -87,6 +87,31 @@ pub struct AppConfig {
     pub games: Vec<GameEntry>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AppSettings {
+    pub launch_on_startup: bool,
+    pub check_updates: bool,
+    /// "symlink" | "hardlink" | "copy"
+    pub deploy_method: String,
+    pub warn_if_running: bool,
+    pub auto_backup: bool,
+    pub backup_retention: u32,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            launch_on_startup: false,
+            check_updates: true,
+            deploy_method: "symlink".to_string(),
+            warn_if_running: true,
+            auto_backup: true,
+            backup_retention: 5,
+        }
+    }
+}
+
 /// Current config schema version.
 /// v1 → v2: stripped mod-dir prefix from installed_files
 /// v2 → v3: added profiles + active_profile_id to GameEntry

@@ -1,9 +1,11 @@
 import { useState, useCallback, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import type { AppConfig, Toast, DialogState } from './types';
+import type { AppConfig, AppSettings, Toast, DialogState } from './types';
+import Titlebar from './components/Titlebar';
 import Sidebar from './components/Sidebar';
 import ModList from './components/ModList';
+import Settings from './components/Settings';
 import AddGameDialog from './components/AddGameDialog';
 import EditGameDialog from './components/EditGameDialog';
 import ImportModDialog from './components/ImportModDialog';
@@ -16,12 +18,23 @@ import ToastContainer from './components/ToastContainer';
 
 import type { ImportResult, ToggleResult } from './types';
 
+const DEFAULT_SETTINGS: AppSettings = {
+  launchOnStartup: false,
+  checkUpdates: true,
+  deployMethod: 'symlink',
+  warnIfRunning: true,
+  autoBackup: true,
+  backupRetention: 5,
+};
+
 export default function App() {
   const [config, setConfig] = useState<AppConfig>({ version: 1, games: [] });
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [dialog, setDialog] = useState<DialogState>({ mode: null });
   const [sevenZAvailable, setSevenZAvailable] = useState<boolean>(true);
+  const [view, setView] = useState<'game' | 'settings'>('game');
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const selectedGame = config.games.find(g => g.id === selectedGameId) ?? null;
 
   const addToast = useCallback((type: Toast['type'], message: string) => {
@@ -33,7 +46,36 @@ export default function App() {
   useEffect(() => {
     invoke<AppConfig>('get_config').then(setConfig).catch(e => addToast('error', `Config: ${e}`));
     invoke<string>('check_7z_available').catch(() => { setSevenZAvailable(false); addToast('warning', '7z not found. Install p7zip-full.'); });
+    invoke<AppSettings>('get_settings').then(setSettings).catch(e => addToast('error', `Settings: ${e}`));
   }, []);
+
+  const openSettings = useCallback(() => setView('settings'), []);
+  const closeSettings = useCallback(() => setView('game'), []);
+
+  const updateSettings = useCallback(async (patch: Partial<AppSettings>) => {
+    const next = { ...settings, ...patch };
+    setSettings(next);
+    try {
+      await invoke<AppSettings>('save_settings', { settings: next });
+    } catch (e) {
+      addToast('error', `Settings: ${e}`);
+    }
+  }, [settings, addToast]);
+
+  const handleResetSettings = useCallback(async () => {
+    try {
+      const s = await invoke<AppSettings>('reset_settings');
+      setSettings(s);
+      addToast('success', 'Settings reset to defaults');
+    } catch (e) { addToast('error', `${e}`); }
+  }, [addToast]);
+
+  const handleClearCache = useCallback(async () => {
+    try {
+      const msg = await invoke<string>('clear_cache');
+      addToast('success', msg);
+    } catch (e) { addToast('error', `${e}`); }
+  }, [addToast]);
 
   const dismissToast = useCallback((id: string) => setToasts(prev => prev.filter(t => t.id !== id)), []);
   const openDialog = useCallback((mode: DialogState['mode'], gameId?: string, modId?: string) => setDialog({ mode, gameId, modId }), []);
@@ -126,24 +168,30 @@ export default function App() {
   }, [addToast, reloadConfig]);
 
   return (
-    <div className="app">
-      <Sidebar games={config.games} selectedGameId={selectedGameId} onSelectGame={setSelectedGameId} onAddGame={() => openDialog('add-game')} />
+    <div className="app-shell">
+      <Titlebar />
+      <div className="app">
+        <Sidebar games={config.games} selectedGameId={selectedGameId} onSelectGame={(id) => { setSelectedGameId(id); setView('game'); }} onAddGame={() => openDialog('add-game')} onOpenSettings={openSettings} settingsActive={view === 'settings'} />
       <div className="main-panel">
-        {selectedGame ? (
-          <ModList game={selectedGame}
-            onToggleMod={(mid) => handleToggleMod(selectedGame.id, mid)}
-            onImportMod={() => openDialog('import-mod', selectedGame.id)}
-            onEditGame={() => openDialog('edit-game', selectedGame.id)}
-            onDeleteGame={() => openDialog('remove-game', selectedGame.id)}
-            onDeleteMod={(mid) => openDialog('delete-mod', selectedGame.id, mid)}
-            onReorderMods={(mods) => handleReorder(selectedGame.id, mods.map(m => m.id))}
-            onDeployAll={handleDeployAll} onPurgeAll={handlePurgeAll} onLaunchGame={handleLaunch}
-            onBackupRestore={() => openDialog('backup-restore')}
-            onBatchToggleMod={(ids, enabled) => handleBatchToggle(selectedGame.id, ids, enabled)}
-            onBatchDeleteMod={(ids) => handleBatchDelete(selectedGame.id, ids)}
-            onReloadConfig={reloadConfig}
-            onOpenProfiles={() => openDialog('profiles', selectedGame.id)}
-            onModInfo={(modId) => openDialog('mod-info', selectedGame.id, modId)} />
+        {view === 'settings' ? (
+          <Settings settings={settings} onChange={updateSettings} onClose={closeSettings} onClearCache={handleClearCache} onResetSettings={handleResetSettings} />
+        ) : selectedGame ? (
+          <div className="panel-fade" key={selectedGame.id}>
+            <ModList game={selectedGame}
+              onToggleMod={(mid) => handleToggleMod(selectedGame.id, mid)}
+              onImportMod={() => openDialog('import-mod', selectedGame.id)}
+              onEditGame={() => openDialog('edit-game', selectedGame.id)}
+              onDeleteGame={() => openDialog('remove-game', selectedGame.id)}
+              onDeleteMod={(mid) => openDialog('delete-mod', selectedGame.id, mid)}
+              onReorderMods={(mods) => handleReorder(selectedGame.id, mods.map(m => m.id))}
+              onDeployAll={handleDeployAll} onPurgeAll={handlePurgeAll} onLaunchGame={handleLaunch}
+              onBackupRestore={() => openDialog('backup-restore')}
+              onBatchToggleMod={(ids, enabled) => handleBatchToggle(selectedGame.id, ids, enabled)}
+              onBatchDeleteMod={(ids) => handleBatchDelete(selectedGame.id, ids)}
+              onReloadConfig={reloadConfig}
+              onOpenProfiles={() => openDialog('profiles', selectedGame.id)}
+              onModInfo={(modId) => openDialog('mod-info', selectedGame.id, modId)} />
+          </div>
         ) : (
           <div className="mod-list-empty"><div className="mod-list-empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg></div><div className="mod-list-empty-title">Select a game</div><div className="mod-list-empty-desc">Choose a game from the sidebar to manage its mods.</div></div>
         )}
@@ -176,6 +224,7 @@ export default function App() {
         })()
       )}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+      </div>
     </div>
   );
 }

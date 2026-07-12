@@ -14,11 +14,25 @@ mod detection;
 mod downloader;
 mod games;
 mod plugins;
+mod process;
 mod sync;
 mod update_check;
 
-pub use config::AppConfig;
+pub use config::{AppConfig, AppSettings};
 pub use games::{Game, GameRegistry, GameType};
+
+/// Blocks write-time mod operations (deploy, toggle, reorder) while the game appears
+/// to be running, if the user has "Warn if game is running" enabled in Settings.
+fn guard_game_not_running(game: &config::GameEntry) -> Result<(), String> {
+    let settings = db::load_settings().unwrap_or_default();
+    if settings.warn_if_running && process::is_game_running(game) {
+        return Err(format!(
+            "{} appears to be running. Close it before deploying, enabling, disabling, or reordering mods.",
+            game.name
+        ));
+    }
+    Ok(())
+}
 
 /// Returns the config directory: ~/.config/linux-mod-manager/
 fn config_dir() -> PathBuf {
@@ -353,6 +367,7 @@ fn toggle_mod(game_id: String, mod_id: String) -> Result<ToggleResult, String> {
         .iter()
         .position(|g| g.id == game_id)
         .ok_or("Game not found")?;
+    guard_game_not_running(&cfg.games[game_idx])?;
 
     let has_load_order = {
         let gt: GameType = serde_json::from_str(&format!("\"{}\"", cfg.games[game_idx].game_type))
@@ -533,6 +548,7 @@ fn batch_toggle(
         .iter()
         .position(|g| g.id == game_id)
         .ok_or("Game not found")?;
+    guard_game_not_running(&cfg.games[game_idx])?;
 
     let has_load_order = {
         let gt: GameType = serde_json::from_str(&format!("\"{}\"", cfg.games[game_idx].game_type))
@@ -713,6 +729,9 @@ fn batch_delete(game_id: String, mod_ids: Vec<String>) -> Result<AppConfig, Stri
 #[tauri::command]
 fn reorder_mods(game_id: String, mod_ids: Vec<String>) -> Result<AppConfig, String> {
     let mut cfg = config::load().map_err(|e| e.to_string())?;
+    if let Some(g) = cfg.games.iter().find(|g| g.id == game_id) {
+        guard_game_not_running(g)?;
+    }
     let game = cfg
         .games
         .iter_mut()
@@ -815,6 +834,14 @@ fn check_conflicts(game_id: String) -> Result<Vec<(String, ConflictInfo)>, Strin
 fn deploy_all(game_id: String) -> Result<Vec<(String, bool, String)>, String> {
     let cfg = config::load().map_err(|e| e.to_string())?;
     let game = cfg.games.iter().find(|g| g.id == game_id).ok_or("Game not found")?;
+    guard_game_not_running(game)?;
+
+    let settings = db::load_settings().unwrap_or_default();
+    if settings.auto_backup {
+        let _ = backup_config();
+        let _ = prune_backups(settings.backup_retention);
+    }
+
     deploy::deploy_mods(game)
 }
 
@@ -1102,6 +1129,18 @@ fn list_backups() -> Result<Vec<BackupInfo>, String> {
     Ok(backups)
 }
 
+/// Deletes backups beyond the `retention` most recent, per Settings > Backups > "Keep last backups".
+fn prune_backups(retention: u32) -> Result<(), String> {
+    let mut backups = list_backups()?;
+    if backups.len() as u32 <= retention.max(1) {
+        return Ok(());
+    }
+    for stale in backups.split_off(retention.max(1) as usize) {
+        let _ = fs::remove_file(backups_dir().join(&stale.filename));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn restore_config(backup_filename: String) -> Result<AppConfig, String> {
     let src = backups_dir().join(&backup_filename);
@@ -1262,6 +1301,72 @@ fn scan_saves(game_id: String) -> Result<Vec<SaveFile>, String> {
 }
 
 // ═══════════════════════════════════════════════════════
+// Settings Commands
+// ═══════════════════════════════════════════════════════
+
+#[tauri::command]
+fn get_settings() -> Result<AppSettings, String> {
+    db::load_settings()
+}
+
+#[tauri::command]
+fn save_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<AppSettings, String> {
+    db::save_settings(&settings)?;
+    sync_autostart(&app, settings.launch_on_startup);
+    Ok(settings)
+}
+
+#[tauri::command]
+fn reset_settings(app: tauri::AppHandle) -> Result<AppSettings, String> {
+    let defaults = AppSettings::default();
+    db::save_settings(&defaults)?;
+    sync_autostart(&app, defaults.launch_on_startup);
+    Ok(defaults)
+}
+
+fn sync_autostart(app: &tauri::AppHandle, enabled: bool) {
+    use tauri_plugin_autostart::ManagerExt;
+    let autolaunch = app.autolaunch();
+    let is_on = autolaunch.is_enabled().unwrap_or(false);
+    if enabled && !is_on {
+        let _ = autolaunch.enable();
+    } else if !enabled && is_on {
+        let _ = autolaunch.disable();
+    }
+}
+
+#[tauri::command]
+fn is_game_running(game_id: String) -> Result<bool, String> {
+    let cfg = config::load().map_err(|e| e.to_string())?;
+    let game = cfg.games.iter().find(|g| g.id == game_id).ok_or("Game not found")?;
+    Ok(process::is_game_running(game))
+}
+
+/// Deletes cached raw downloaded archives (already imported into the library) and
+/// forgets completed/failed entries in the download queue.
+#[tauri::command]
+fn clear_cache() -> Result<String, String> {
+    let dir = config_dir().join("downloads");
+    let mut removed = 0u64;
+    let mut freed_bytes: u64 = 0;
+
+    if dir.exists() {
+        for entry in fs::read_dir(&dir).map_err(|e| format!("Failed to read downloads dir: {}", e))? {
+            let entry = entry.map_err(|e| format!("Read error: {}", e))?;
+            if let Ok(meta) = entry.metadata() {
+                freed_bytes += meta.len();
+            }
+            if fs::remove_file(entry.path()).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    let _ = downloader::clear_completed_downloads();
+
+    Ok(format!("Cleared {} cached file(s) ({} KB freed)", removed, freed_bytes / 1024))
+}
+
+// ═══════════════════════════════════════════════════════
 // Tauri App Entry
 // ═══════════════════════════════════════════════════════
 
@@ -1270,6 +1375,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(|_app| {
             ensure_dirs().expect("Failed to create config directories");
             db::init().expect("Failed to initialize database");
@@ -1317,6 +1426,11 @@ pub fn run() {
             list_backups,
             restore_config,
             scan_saves,
+            get_settings,
+            save_settings,
+            reset_settings,
+            is_game_running,
+            clear_cache,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

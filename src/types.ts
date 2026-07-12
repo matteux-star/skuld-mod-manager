@@ -109,3 +109,14 @@ export interface SaveFile {
   isAutosave: boolean;
   isQuicksave: boolean;
 }
+
+export type DeployMethod = 'symlink' | 'hardlink' | 'copy';
+
+export interface AppSettings {
+  launchOnStartup: boolean;
+  checkUpdates: boolean;
+  deployMethod: DeployMethod;
+  warnIfRunning: boolean;
+  autoBackup: boolean;
+  backupRetention: number;
+}

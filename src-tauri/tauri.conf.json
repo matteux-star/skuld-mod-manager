@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicegui/tauri-apps/main/.schemas/config.schema.json",
   "productName": "Skuld Mod Manager",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.skuld.mod-manager",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -17,7 +17,7 @@
         "height": 720,
         "minWidth": 800,
         "minHeight": 500,
-        "decorations": true,
+        "decorations": false,
         "fullscreen": false
       }
     ],

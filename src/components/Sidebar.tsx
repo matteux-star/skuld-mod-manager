@@ -5,6 +5,8 @@ interface Props {
   selectedGameId: string | null;
   onSelectGame: (id: string) => void;
   onAddGame: () => void;
+  onOpenSettings: () => void;
+  settingsActive: boolean;
 }
 
 const GAME_ICONS: Record<string, string> = {
@@ -12,7 +14,7 @@ const GAME_ICONS: Record<string, string> = {
   sod2: '🧟',
 };
 
-export default function Sidebar({ games, selectedGameId, onSelectGame, onAddGame }: Props) {
+export default function Sidebar({ games, selectedGameId, onSelectGame, onAddGame, onOpenSettings, settingsActive }: Props) {
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
@@ -23,6 +25,17 @@ export default function Sidebar({ games, selectedGameId, onSelectGame, onAddGame
             </svg>
           </div>
           <span className="sidebar-brand-text">Skuld</span>
+          <button
+            type="button"
+            className={`sidebar-settings-btn${settingsActive ? ' active' : ''}`}
+            aria-label="Settings"
+            onClick={onOpenSettings}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" width="16" height="16">
+              <path d="M10.3 2h3.4l.5 2.4a7.9 7.9 0 0 1 1.8 1l2.3-.9 1.7 3-1.7 1.6c.1.4.1.9.1 1.3s0 .9-.1 1.3l1.7 1.6-1.7 3-2.3-.9a7.9 7.9 0 0 1-1.8 1l-.5 2.4h-3.4l-.5-2.4a7.9 7.9 0 0 1-1.8-1l-2.3.9-1.7-3 1.7-1.6a6.9 6.9 0 0 1 0-2.6L4 8.5l1.7-3 2.3.9a7.9 7.9 0 0 1 1.8-1z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          </button>
         </div>
 
         {games.length > 0 && (
@@ -34,7 +47,7 @@ export default function Sidebar({ games, selectedGameId, onSelectGame, onAddGame
         {games.map(game => (
           <button
             key={game.id}
-            className={`game-item${game.id === selectedGameId ? ' active' : ''}`}
+            className={`game-item${!settingsActive && game.id === selectedGameId ? ' active' : ''}`}
             onClick={() => onSelectGame(game.id)}
           >
             <span className="game-item-icon" aria-hidden="true">

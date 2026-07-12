@@ -1,6 +1,6 @@
-import type { GameEntry, ModEntry } from '../types';
+import type { GameEntry, ModEntry, SaveFile } from '../types';
 import ModCard from './ModCard';
-import SaveScanner from './SaveScanner';
+import DetectSavesDialog from './DetectSavesDialog';
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -123,6 +123,10 @@ export default function ModList({
   const [categoryFilter, setCategoryFilter] = useState<string>('');
   const [tagFilter, setTagFilter] = useState<Set<string>>(new Set());
 
+  // Saves detection
+  const [detectOpen, setDetectOpen] = useState(false);
+  const [savesResult, setSavesResult] = useState<SaveFile[] | null>(null);
+
   // Reset search/sort/selection/filters when game changes
   useEffect(() => {
     setSearchQuery('');
@@ -131,6 +135,7 @@ export default function ModList({
     setSelectedIds(new Set());
     setCategoryFilter('');
     setTagFilter(new Set());
+    setSavesResult(null);
     lastClickedRef.current = -1;
   }, [game.id]);
 
@@ -375,7 +380,14 @@ export default function ModList({
         </button>
       </div>
 
-      <SaveScanner gameId={game.id} gameName={game.name} />
+      <div className="saves-row">
+        <span className="settings-row-desc">
+          {savesResult
+            ? `${savesResult.length} save${savesResult.length !== 1 ? 's' : ''} found for ${game.name}`
+            : `No saves detected for ${game.name}`}
+        </span>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDetectOpen(true)}>Detect Saves</button>
+      </div>
 
       {/* ── Filter bar ── */}
       {game.mods.length > 0 && (
@@ -510,16 +522,6 @@ export default function ModList({
         </div>
       )}
 
-      {game.mods.length > 0 && (
-        <div className="safety-note" role="alert">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-            <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
-          </svg>
-          <span>Close the game before enabling, disabling, or reordering mods.</span>
-        </div>
-      )}
-
       <div className="mod-list">
         {visibleMods.map((mod) => (
           <ModCard key={mod.id} mod={mod} showPriority={hasPriority}
@@ -556,6 +558,15 @@ export default function ModList({
           </div>
         )}
       </div>
+
+      {detectOpen && (
+        <DetectSavesDialog
+          gameId={game.id}
+          gameName={game.name}
+          onScanned={setSavesResult}
+          onClose={() => setDetectOpen(false)}
+        />
+      )}
     </>
   );
 }

@@ -1,6 +1,6 @@
 [package]
 name = "skuld-mod-manager"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [build-dependencies]
@@ -23,6 +23,8 @@ tokio = { version = "1", features = ["rt", "macros"] }
 lazy_static = "1"
 futures-util = "0.3"
 rusqlite = { version = "0.31", features = ["bundled"] }
+sysinfo = "0.38.4"
+tauri-plugin-autostart = "2.5.1"
 
 [dev-dependencies]
 tempfile = "3"

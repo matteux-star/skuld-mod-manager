@@ -6,8 +6,10 @@ use std::path::{Path, PathBuf};
 use crate::config::{GameEntry, ModEntry};
 use crate::games::{GameRegistry, GameType};
 
-/// Create a symlink from `target` (in the game's mod dir) to `source` (in the library).
-fn create_symlink(source: &Path, target: &Path) -> Result<(), String> {
+/// Deploy `source` (in the library) to `target` (in the game's mod dir) using the given
+/// method: "symlink" (default, reversible, no copy), "hardlink" (same filesystem only,
+/// falls back to copy across filesystems), or "copy" (full file duplication).
+fn deploy_file(source: &Path, target: &Path, method: &str) -> Result<(), String> {
     // Ensure parent dir exists
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)
@@ -21,8 +23,23 @@ fn create_symlink(source: &Path, target: &Path) -> Result<(), String> {
             .map_err(|e| format!("Failed to remove existing target {}: {}", target.display(), e))?;
     }
 
-    unix::fs::symlink(source, target)
-        .map_err(|e| format!("Failed to create symlink {} -> {}: {}", target.display(), source.display(), e))
+    match method {
+        "hardlink" => fs::hard_link(source, target)
+            .or_else(|_| fs::copy(source, target).map(|_| ()))
+            .map_err(|e| format!("Failed to hardlink {} -> {}: {}", target.display(), source.display(), e)),
+        "copy" => fs::copy(source, target)
+            .map(|_| ())
+            .map_err(|e| format!("Failed to copy {} -> {}: {}", source.display(), target.display(), e)),
+        _ => unix::fs::symlink(source, target)
+            .map_err(|e| format!("Failed to create symlink {} -> {}: {}", target.display(), source.display(), e)),
+    }
+}
+
+/// Current deploy method from persisted settings ("symlink" if unset/unreadable).
+fn current_deploy_method() -> String {
+    crate::db::load_settings()
+        .map(|s| s.deploy_method)
+        .unwrap_or_else(|_| "symlink".to_string())
 }
 
 /// Deploy all enabled mods for a game as symlinks.
@@ -41,6 +58,7 @@ fn deploy_mods_from_library(
     let game_path = PathBuf::from(&game.path);
     let mod_base = registry.mod_dir(&game_path)?;
 
+    let method = current_deploy_method();
     let mut results = Vec::new();
 
     for m in &game.mods {
@@ -64,7 +82,7 @@ fn deploy_mods_from_library(
             let source = mod_root.join(file_path);
             let target = mod_base.join(file_path);
 
-            if let Err(e) = create_symlink(&source, &target) {
+            if let Err(e) = deploy_file(&source, &target, &method) {
                 success = false;
                 errors.push(e);
             }
