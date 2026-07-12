@@ -6,11 +6,11 @@ pkgver=0.1.0
 pkgrel=1
 pkgdesc="Tauri 2 desktop app for managing game mods on Linux"
 arch=('x86_64')
-url="https://github.com/skuld/skuld-mod-manager"
+url="https://github.com/matteux-star/skuld-mod-manager"
 license=('MIT')
 depends=('webkit2gtk-4.1' 'p7zip' 'openssl' 'glib2' 'gtk3' 'libsoup3')
 makedepends=('cargo' 'nodejs' 'npm' 'base-devel' 'git')
-source=("${pkgname}-${pkgver}.tar.gz::https://github.com/skuld/skuld-mod-manager/archive/refs/tags/v${pkgver}.tar.gz")
+source=("${pkgname}-${pkgver}.tar.gz::https://github.com/matteux-star/skuld-mod-manager/archive/refs/tags/v${pkgver}.tar.gz")
 sha256sums=('SKIP')
 
 build() {
