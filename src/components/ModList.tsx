@@ -29,6 +29,7 @@ interface Props {
   onReloadConfig: () => void;
   onOpenProfiles: () => void;
   onModInfo: (modId: string) => void;
+  onDiagnostics: () => void;
 }
 
 function sortMods(mods: ModEntry[], by: SortBy, dir: SortDir): ModEntry[] {
@@ -103,6 +104,7 @@ export default function ModList({
   onReloadConfig,
   onOpenProfiles,
   onModInfo,
+  onDiagnostics,
 }: Props) {
   const hasPriority = game.type === 'witcher3';
   const enabledCount = game.mods.filter(m => m.enabled).length;
@@ -372,6 +374,14 @@ export default function ModList({
             <polyline points="7 3 7 8 15 8" />
           </svg>
           Backups
+        </button>
+        <button className="btn btn-ghost btn-sm" onClick={onDiagnostics} title="Diagnose mod-loading problems" style={{ marginLeft: 'var(--space-1)' }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
+            <path d="M12 2a4 4 0 0 0-4 4v1H6a2 2 0 0 0-2 2v1h16V9a2 2 0 0 0-2-2h-2V6a4 4 0 0 0-4-4z" />
+            <path d="M4 14v3a5 5 0 0 0 5 5h6a5 5 0 0 0 5-5v-3" />
+            <line x1="9" y1="11" x2="9" y2="18" /><line x1="15" y1="11" x2="15" y2="18" />
+          </svg>
+          Diagnostics
         </button>
       </div>
 

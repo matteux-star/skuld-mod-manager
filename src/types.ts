@@ -76,6 +76,16 @@ export interface ToggleResult {
   deployResults: [string, boolean, string][] | null;
 }
 
+export interface Finding {
+  severity: 'info' | 'warning' | 'error';
+  message: string;
+}
+
+export interface DiagnosticReport {
+  findings: Finding[];
+  orphanedFolders: string[];
+}
+
 export type DialogMode =
   | 'add-game'
   | 'edit-game'
@@ -86,6 +96,7 @@ export type DialogMode =
   | 'backup-restore'
   | 'profiles'
   | 'mod-info'
+  | 'diagnostics'
   | null;
 
 export interface DialogState {

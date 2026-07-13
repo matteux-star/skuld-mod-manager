@@ -22,7 +22,9 @@ export default function RemoveGameDialog({ gameName, onConfirm, onClose }: Props
             Remove <strong style={{ color: 'var(--text-primary)' }}>{gameName}</strong> from the manager?
           </p>
           <p style={{ color: 'var(--text-muted)', fontSize: 'var(--text-xs)', marginTop: 'var(--space-2)' }}>
-            All symlinks will be removed. Mod library files stay on disk.
+            All symlinks will be removed and every mod's entry in the list will be deleted.
+            Extracted mod files stay on disk but become orphaned — re-add the game and use
+            Diagnostics → Recover to bring them back.
           </p>
         </div>
 

@@ -12,6 +12,7 @@ import RemoveGameDialog from './components/RemoveGameDialog';
 import BackupRestoreDialog from './components/BackupRestoreDialog';
 import ProfileDialog from './components/ProfileDialog';
 import ModInfoDialog from './components/ModInfoDialog';
+import DiagnosticsDialog from './components/DiagnosticsDialog';
 import ToastContainer from './components/ToastContainer';
 
 import type { ImportResult, ToggleResult } from './types';
@@ -143,7 +144,8 @@ export default function App() {
             onBatchDeleteMod={(ids) => handleBatchDelete(selectedGame.id, ids)}
             onReloadConfig={reloadConfig}
             onOpenProfiles={() => openDialog('profiles', selectedGame.id)}
-            onModInfo={(modId) => openDialog('mod-info', selectedGame.id, modId)} />
+            onModInfo={(modId) => openDialog('mod-info', selectedGame.id, modId)}
+            onDiagnostics={() => openDialog('diagnostics', selectedGame.id)} />
         ) : (
           <div className="mod-list-empty"><div className="mod-list-empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg></div><div className="mod-list-empty-title">Select a game</div><div className="mod-list-empty-desc">Choose a game from the sidebar to manage its mods.</div></div>
         )}
@@ -174,6 +176,9 @@ export default function App() {
           if (!m) return null;
           return <ModInfoDialog gameId={dialog.gameId!} mod={m} onClose={closeDialog} onSaved={handleRestored} />;
         })()
+      )}
+      {dialog.mode === 'diagnostics' && dialog.gameId && (
+        <DiagnosticsDialog gameId={dialog.gameId} gameName={selectedGame?.name ?? ''} onClose={closeDialog} onRecovered={reloadConfig} />
       )}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>

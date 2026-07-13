@@ -390,6 +390,22 @@ mod tests {
     }
 
     #[test]
+    fn validate_sod2_rejects_legacy_non_pak_mod_layout() {
+        // Pre-Paks-era SoD2 mods ship loose .uasset files under a
+        // Saved/Cooked/WindowsNoEditor/... layout instead of a .pak — these
+        // can't be validated/adopted under the current pak-flattening logic.
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("StateOfDecay2/Saved/Cooked/WindowsNoEditor/StateOfDecay2/Content/Items/Catalogs")).unwrap();
+        fs::write(
+            dir.path().join("StateOfDecay2/Saved/Cooked/WindowsNoEditor/StateOfDecay2/Content/Items/Catalogs/CatalogSchedule.uasset"),
+            b"x",
+        ).unwrap();
+
+        let err = validate_sod2(dir.path()).unwrap_err();
+        assert!(err.contains("No .pak files found"), "unexpected error: {}", err);
+    }
+
+    #[test]
     fn witcher3_installed_files_are_modname_relative() {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir_all(dir.path().join("content")).unwrap();

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod archive;
@@ -11,6 +11,7 @@ mod db;
 mod dependencies;
 mod deploy;
 mod detection;
+mod diagnostics;
 mod downloader;
 mod games;
 mod plugins;
@@ -217,6 +218,55 @@ pub struct ImportResult {
     pub warning: Option<String>,
 }
 
+/// Validate an already-extracted mod folder for `game_type` and derive its
+/// `installed_files` (paths relative to `Game::mod_dir`). Shared by fresh
+/// imports and by `adopt_orphaned_mod`, which re-runs this against a folder
+/// that's already on disk instead of re-extracting an archive.
+fn validate_and_derive_installed_files(
+    extract_dir: &Path,
+    game_type: &str,
+    mod_name: &str,
+) -> Result<Vec<String>, String> {
+    let installed_files = match game_type {
+        "sod2" => {
+            let _pak_files = archive::validate_sod2(extract_dir)?;
+            archive::derive_installed_files(extract_dir, "sod2", mod_name)?
+        }
+        "witcher3" => {
+            let mod_root = archive::validate_witcher3(extract_dir)?;
+            archive::derive_installed_files(&mod_root, "witcher3", mod_name)?
+        }
+        // Generic games: use definition-based validation
+        other => {
+            let def = games::get_definition(other)
+                .ok_or_else(|| format!("Unknown game type: {}", other))?;
+            match def.validation.mode.as_str() {
+                "containsFileType" => {
+                    let ext = def.validation.value.as_str();
+                    let found = archive::validate_by_extension(extract_dir, ext)?;
+                    if found.is_empty() {
+                        return Err(format!("No {} files found in archive", ext));
+                    }
+                }
+                "containsSubdirectory" => {
+                    let subdir = def.validation.value.as_str();
+                    archive::validate_subdirectory(extract_dir, subdir)?;
+                }
+                _ => {
+                    // "anyFiles" — accept anything, derive all files
+                }
+            }
+            archive::derive_installed_files(extract_dir, other, mod_name)?
+        }
+    };
+
+    if installed_files.is_empty() {
+        return Err("No files found to install. The archive may be empty or malformed.".to_string());
+    }
+
+    Ok(installed_files)
+}
+
 #[tauri::command]
 fn import_mod(
     game_id: String,
@@ -243,43 +293,8 @@ fn import_mod(
     let (extract_dir, _extracted_files) =
         archive::extract_archive(&archive_path, &game.game_type, &mod_name)?;
 
-    // Validate format based on game type
-    let installed_files = match game.game_type.as_str() {
-        "sod2" => {
-            let _pak_files = archive::validate_sod2(&extract_dir)?;
-            archive::derive_installed_files(&extract_dir, "sod2", &mod_name)?
-        }
-        "witcher3" => {
-            let mod_root = archive::validate_witcher3(&extract_dir)?;
-            archive::derive_installed_files(&mod_root, "witcher3", &mod_name)?
-        }
-        // Generic games: use definition-based validation
-        other => {
-            let def = games::get_definition(other)
-                .ok_or_else(|| format!("Unknown game type: {}", other))?;
-            match def.validation.mode.as_str() {
-                "containsFileType" => {
-                    let ext = def.validation.value.as_str();
-                    let found = archive::validate_by_extension(&extract_dir, ext)?;
-                    if found.is_empty() {
-                        return Err(format!("No {} files found in archive", ext));
-                    }
-                }
-                "containsSubdirectory" => {
-                    let subdir = def.validation.value.as_str();
-                    archive::validate_subdirectory(&extract_dir, subdir)?;
-                }
-                _ => {
-                    // "anyFiles" — accept anything, derive all files
-                }
-            }
-            archive::derive_installed_files(&extract_dir, other, &mod_name)?
-        }
-    };
-
-    if installed_files.is_empty() {
-        return Err("No files found to install. The archive may be empty or malformed.".to_string());
-    }
+    let installed_files =
+        validate_and_derive_installed_files(&extract_dir, &game.game_type, &mod_name)?;
 
     // Add mod to config (disabled by default)
     let priority = game.mods.len() + 1;
@@ -323,6 +338,72 @@ fn import_mod(
     Ok(ImportResult {
         mod_id,
         mod_name,
+        installed_files,
+        warning: None,
+    })
+}
+
+/// Re-adopt a library folder that's already fully extracted on disk but has
+/// no matching `mods` row (e.g. left behind after `remove_game` cascade-deleted
+/// the row, or an import that crashed after extraction but before saving).
+/// Skips extraction — validates and registers the existing folder in place.
+#[tauri::command]
+fn adopt_orphaned_mod(game_id: String, folder_name: String) -> Result<ImportResult, String> {
+    let mut cfg = config::load().map_err(|e| e.to_string())?;
+    let game = cfg
+        .games
+        .iter()
+        .find(|g| g.id == game_id)
+        .ok_or("Game not found")?;
+
+    if let Some(existing) = game.mods.iter().find(|m| m.name == folder_name) {
+        return Err(format!(
+            "A mod named '{}' already exists for this game.",
+            existing.name
+        ));
+    }
+
+    let extract_dir = library_dir().join(&game.game_type).join(&folder_name);
+    if !extract_dir.is_dir() {
+        return Err(format!("No library folder found at {}", extract_dir.display()));
+    }
+
+    let installed_files =
+        validate_and_derive_installed_files(&extract_dir, &game.game_type, &folder_name)?;
+
+    let priority = game.mods.len() + 1;
+    let mod_id = uuid::Uuid::new_v4().to_string();
+    let extracted_version = archive::extract_version_from_filename(&folder_name);
+    let now_ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let mod_entry = config::ModEntry {
+        id: mod_id.clone(),
+        name: folder_name.clone(),
+        archive_source: "(recovered from orphaned library folder)".to_string(),
+        enabled: false,
+        priority,
+        installed_files: installed_files.clone(),
+        version: extracted_version,
+        author: None,
+        description: None,
+        source_url: None,
+        category: None,
+        tags: vec![],
+        installed_at: Some(format_ts(now_ts)),
+        updated_at: None,
+        relationships: vec![],
+    };
+
+    let game = cfg.games.iter_mut().find(|g| g.id == game_id).unwrap();
+    game.mods.push(mod_entry);
+    config::save(&cfg).map_err(|e| e.to_string())?;
+
+    Ok(ImportResult {
+        mod_id,
+        mod_name: folder_name,
         installed_files,
         warning: None,
     })
@@ -773,6 +854,17 @@ fn check_broken_symlinks(game_id: String) -> Result<Vec<(String, Vec<String>)>, 
         .find(|g| g.id == game_id)
         .ok_or("Game not found")?;
     Ok(deploy::check_all_broken(game))
+}
+
+#[tauri::command]
+fn diagnose_game(game_id: String) -> Result<diagnostics::DiagnosticReport, String> {
+    let cfg = config::load().map_err(|e| e.to_string())?;
+    let game = cfg
+        .games
+        .iter()
+        .find(|g| g.id == game_id)
+        .ok_or("Game not found")?;
+    Ok(diagnostics::diagnose_game(game))
 }
 
 #[tauri::command]
@@ -1293,6 +1385,7 @@ pub fn run() {
             add_game,
             remove_game,
             import_mod,
+            adopt_orphaned_mod,
             toggle_mod,
             delete_mod,
             batch_toggle,
@@ -1301,6 +1394,7 @@ pub fn run() {
             edit_game_path,
             verify_game_path,
             check_broken_symlinks,
+            diagnose_game,
             check_7z_available,
             check_conflicts,
             deploy_all,
